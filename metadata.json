@@ -1,0 +1,6 @@
+{
+  "name": "Booky - English Reading & Conversation Coach",
+  "description": "Expert AI reading and conversation coach that helps learners read English books naturally, master shadowing, and expand into fluent everyday English conversation.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
