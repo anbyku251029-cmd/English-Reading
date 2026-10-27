@@ -96,3 +96,4 @@ STEP 01~07을 통해 패키지 의존성 안정화, 4단계 학습 흐름 및 AI
 - 자동 동기화 스크립트: `scripts/safe-git-sync.ps1`
 - 안전 점검: `books.sqlite3`, `Book/`, `.env*` 등 저작권/보안 파일 격리 상태 확인 완료.
 - 원격 저장소: `https://github.com/anbyku251029-cmd/English-Reading` (`origin/main`)
+- **최신 Git 커밋 SHA**: `4901fa5ad07a54f19a61fe695900fb3be542f37f` (기능 구현: `840b302dcec22fb15bd12b77bddaf334b040067d`)
