@@ -14,6 +14,8 @@ import { SettingsModal } from './components/SettingsModal';
 import { ExportNotesModal } from './components/ExportNotesModal';
 import { HomeDashboardModal } from './components/HomeDashboardModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
+import { CnnNewsCategoryView } from './components/cnnNews/CnnNewsCategoryView';
+import { CnnNewsReaderView } from './components/cnnNews/CnnNewsReaderView';
 import { PRESET_BOOKS, BookPreset } from './data/presetBooks';
 import { Message, StudyPack, KeyExpression, LearnerLevel, ReadingProgress } from './types';
 import {
@@ -25,6 +27,8 @@ import {
 
 export default function App() {
   const [currentBook, setCurrentBook] = useState<BookPreset>(PRESET_BOOKS[0]);
+  const [currentCategory, setCurrentCategory] = useState<'books' | 'cnn_news'>('books');
+  const [selectedNewsArticleId, setSelectedNewsArticleId] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [learnerLevel, setLearnerLevel] = useState<LearnerLevel>('beginner');
   const [preferredVoice, setPreferredVoice] = useState<string>('Kore');
@@ -434,6 +438,11 @@ export default function App() {
         onOpenBackupModal={() => setIsBackupModalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onExportNotes={() => setIsExportOpen(true)}
+        currentCategory={currentCategory}
+        onSelectCategory={(cat) => {
+          setCurrentCategory(cat);
+          if (cat === 'books') setSelectedNewsArticleId(null);
+        }}
         savedExpressionsCount={savedExpressions.length}
         isChatOpen={isChatOpen}
         onToggleChat={() => setIsChatOpen((prev) => !prev)}
@@ -561,6 +570,7 @@ export default function App() {
           setIsNotebookOpen(true);
         }}
         onOpenBackupModal={() => setIsBackupModalOpen(true)}
+        onOpenCnnNews={() => setCurrentCategory('cnn_news')}
       />
 
       <BackupRestoreModal

@@ -30,6 +30,7 @@ interface HomeDashboardModalProps {
   onOpenLibrary: () => void;
   onOpenNotebook: (initialTab?: 'expressions' | 'logs' | 'stats' | 'review') => void;
   onOpenBackupModal: () => void;
+  onOpenCnnNews?: () => void;
 }
 
 export const HomeDashboardModal: React.FC<HomeDashboardModalProps> = ({
@@ -40,6 +41,7 @@ export const HomeDashboardModal: React.FC<HomeDashboardModalProps> = ({
   onOpenLibrary,
   onOpenNotebook,
   onOpenBackupModal,
+  onOpenCnnNews,
 }) => {
   const [goals, setGoals] = useState<DailyGoals>(loadDailyGoals());
   const [isEditingGoals, setIsEditingGoals] = useState(false);
@@ -360,6 +362,22 @@ export const HomeDashboardModal: React.FC<HomeDashboardModalProps> = ({
                   </span>
                   <span className="text-slate-400">→</span>
                 </button>
+
+                {onOpenCnnNews && (
+                  <button
+                    onClick={() => {
+                      onOpenCnnNews();
+                      onClose();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-lg hover:border-red-400 transition shadow-sm text-left"
+                  >
+                    <span className="flex items-center space-x-2">
+                      <span>📰</span>
+                      <span className="text-red-900 dark:text-red-300 font-bold">CNN News (C2 고급 영어)</span>
+                    </span>
+                    <span className="text-red-400">→</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {

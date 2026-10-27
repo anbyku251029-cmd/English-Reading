@@ -241,7 +241,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
                   <div className="bg-slate-50 dark:bg-slate-700/50 p-2 rounded">
                     <span className="text-slate-500 dark:text-slate-400 block text-[10px]">저장된 표현</span>
                     <strong className="text-indigo-600 dark:text-indigo-400 text-sm">
@@ -258,6 +258,12 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                     <span className="text-slate-500 dark:text-slate-400 block text-[10px]">단어 메모</span>
                     <strong className="text-indigo-600 dark:text-indigo-400 text-sm">
                       {validationResult.itemCounts?.vocabNotes || 0}개
+                    </strong>
+                  </div>
+                  <div className="bg-slate-50 dark:bg-slate-700/50 p-2 rounded">
+                    <span className="text-slate-500 dark:text-slate-400 block text-[10px]">CNN 뉴스 기사</span>
+                    <strong className="text-rose-600 dark:text-rose-400 text-sm">
+                      {validationResult.itemCounts?.cnnNewsArticles || 0}건
                     </strong>
                   </div>
                 </div>
