@@ -78,7 +78,8 @@ python scripts/verify_step10_guided_course.py
 
 - **동기화 스크립트**: `scripts/safe-git-sync.ps1`
 - **커밋 메시지**: `feat: complete STEP 10 (CNN News C2 guided study course)`
-- **커밋 SHA**: *(동기화 실행 후 기재)*
+- **커밋 SHA**: `c96d9a9d99a8fc1ef896c104a080864ee12d6c70`
+- **원격 저장소**: `https://github.com/anbyku251029-cmd/English-Reading`
 - **보안 격리 상태**:
   - `Book/` (저작권 원본 도서): 안전 제외
   - `data/local_books/books.sqlite3`: 안전 제외
