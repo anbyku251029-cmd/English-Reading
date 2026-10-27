@@ -16,12 +16,15 @@ import {
   SentenceAnalysisItem,
   WritingOutputData,
   DebateOutputData,
+  GuidedCourseStep,
+  GuidedCourseProgress,
 } from '../types';
 import { STORAGE_KEYS as STUDY_KEYS, loadSavedExpressions, saveExpressions } from './studyStorage';
 
 export const CNN_STORAGE_KEYS = {
   ARTICLES: 'booky_cnn_news_articles',
   LOGS: 'booky_cnn_news_logs',
+  GUIDED_PROGRESS: 'booky_cnn_guided_progress',
 };
 
 // ============================================================================
@@ -609,3 +612,134 @@ export function calculateNewsStats(): CnnNewsStatsSummary {
     recentLogs: logs.slice(0, 10),
   };
 }
+
+// ============================================================================
+// 8. CNN News C2 Guided Course Management (Step 10)
+// ============================================================================
+
+export function loadAllGuidedProgress(): Record<string, GuidedCourseProgress> {
+  try {
+    const raw = localStorage.getItem(CNN_STORAGE_KEYS.GUIDED_PROGRESS);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.warn('Failed to parse cnn guided progress from localStorage', e);
+    return {};
+  }
+}
+
+export function saveAllGuidedProgress(map: Record<string, GuidedCourseProgress>): void {
+  try {
+    localStorage.setItem(CNN_STORAGE_KEYS.GUIDED_PROGRESS, JSON.stringify(map));
+  } catch (e) {
+    console.error('Failed to save cnn guided progress', e);
+  }
+}
+
+export function getGuidedProgress(newsId: string): GuidedCourseProgress {
+  const all = loadAllGuidedProgress();
+  if (all[newsId]) {
+    return all[newsId];
+  }
+
+  // 기본 초기 진행 상태 생성 및 저장
+  const initial: GuidedCourseProgress = {
+    newsId,
+    currentStep: 'NOT_STARTED',
+    highestStepReached: 'NOT_STARTED',
+    lastParagraphIndex: 0,
+    lastModifiedAt: new Date().toISOString(),
+    checklist: {
+      hasReadPassage: false,
+      analyzedSentenceIds: [],
+      answeredQuestionIds: [],
+      hasCompletedWriting: false,
+      hasReviewedAll: false,
+    },
+  };
+  all[newsId] = initial;
+  saveAllGuidedProgress(all);
+  return initial;
+}
+
+export function updateGuidedProgress(
+  newsId: string,
+  updates: Partial<GuidedCourseProgress>
+): GuidedCourseProgress {
+  const all = loadAllGuidedProgress();
+  const current = getGuidedProgress(newsId);
+
+  // 단계 도달 순서 우선순위
+  const stepRank: Record<GuidedCourseStep, number> = {
+    NOT_STARTED: 0,
+    READING: 1,
+    ANALYSIS: 2,
+    COMPREHENSION: 3,
+    WRITING: 4,
+    REVIEW: 5,
+    COMPLETED: 6,
+  };
+
+  const newStep = updates.currentStep || current.currentStep;
+  const highest =
+    stepRank[newStep] > stepRank[current.highestStepReached]
+      ? newStep
+      : current.highestStepReached;
+
+  const merged: GuidedCourseProgress = {
+    ...current,
+    ...updates,
+    checklist: {
+      ...current.checklist,
+      ...(updates.checklist || {}),
+    },
+    highestStepReached: highest,
+    lastModifiedAt: new Date().toISOString(),
+  };
+
+  if (!merged.startedAt && newStep !== 'NOT_STARTED') {
+    merged.startedAt = new Date().toISOString();
+  }
+
+  if (newStep === 'COMPLETED' && !merged.completedAt) {
+    merged.completedAt = new Date().toISOString();
+  }
+
+  all[newsId] = merged;
+  saveAllGuidedProgress(all);
+  return merged;
+}
+
+/**
+ * 기사의 실제 저장 데이터와 코스 진행 체크리스트 동기화
+ * (가짜 완료를 방지하고 실제 사용자가 작성한 내역을 기반으로 정합성 보장)
+ */
+export function syncGuidedProgressWithArticle(article: CnnNewsArticle): GuidedCourseProgress {
+  const current = getGuidedProgress(article.id);
+
+  const analyzedIds = Object.keys(article.sentenceAnalyses || {});
+  const answeredIds = (article.readingQuestions || [])
+    .filter((q) => q.userAnswer && q.userAnswer.trim().length > 0)
+    .map((q) => q.id);
+
+  const hasWriting = !!(
+    (article.writingOutput?.summary && article.writingOutput.summary.trim().length > 0) ||
+    (article.writingOutput?.opinionEssay && article.writingOutput.opinionEssay.trim().length > 0) ||
+    (article.debateOutput?.coreIssue && article.debateOutput.coreIssue.trim().length > 0)
+  );
+
+  const updatedChecklist = {
+    hasReadPassage: current.checklist.hasReadPassage || (article.lastReadParagraphIndex || 0) > 0 || article.paragraphs.length > 0,
+    analyzedSentenceIds: analyzedIds,
+    answeredQuestionIds: answeredIds,
+    hasCompletedWriting: hasWriting,
+    hasReviewedAll: current.checklist.hasReviewedAll,
+  };
+
+  return updateGuidedProgress(article.id, {
+    checklist: updatedChecklist,
+    lastParagraphIndex: article.lastReadParagraphIndex || current.lastParagraphIndex,
+  });
+}
+

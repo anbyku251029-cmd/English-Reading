@@ -1,7 +1,7 @@
 /**
- * Booky STEP 08 & STEP 09: 로컬 데이터 안전 백업 및 복원 유틸리티
+ * Booky STEP 08, 09, 10: 로컬 데이터 안전 백업 및 복원 유틸리티
  * 
- * - 브라우저 localStorage에 저장된 개인 학습 데이터(원서 + CNN 뉴스)를 JSON 파일로 내보내기/불러오기
+ * - 브라우저 localStorage에 저장된 개인 학습 데이터(원서 + CNN 뉴스 + C2 코스 진행도)를 JSON 파일로 내보내기/불러오기
  * - 외부 서버나 AI API 통신 없이 100% 브라우저 로컬에서 안전하게 처리
  * - 최대 5MB 크기 제한, 필수 스키마 및 데이터 무결성 검증
  * - 복원 직전 자동 롤백 백업(booky_pre_restore_backup) 생성으로 실수 방지
@@ -16,6 +16,7 @@ import {
   ReadingProgress,
   CnnNewsArticle,
   CnnNewsStudyLog,
+  GuidedCourseProgress,
 } from '../types';
 import {
   STORAGE_KEYS,
@@ -29,12 +30,14 @@ import {
   loadNewsStudyLogs,
   saveNewsArticles,
   saveNewsStudyLogs,
+  loadAllGuidedProgress,
+  saveAllGuidedProgress,
 } from './cnnNewsStorage';
 
 const MAX_BACKUP_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 /**
- * 1. 현재 로컬 저장소의 모든 Booky 데이터(원서 + CNN 뉴스)를 통합한 백업 객체 생성
+ * 1. 현재 로컬 저장소의 모든 Booky 데이터(원서 + CNN 뉴스 + 단계별 코스)를 통합한 백업 객체 생성
  */
 export function createLocalBackup(): BackupData {
   const expressions: KeyExpression[] = loadSavedExpressions();
@@ -42,6 +45,8 @@ export function createLocalBackup(): BackupData {
   const dailyGoals: DailyGoals = loadDailyGoals();
   const cnnNewsArticles: CnnNewsArticle[] = loadNewsArticles();
   const cnnNewsLogs: CnnNewsStudyLog[] = loadNewsStudyLogs();
+  const guidedProgressMap = loadAllGuidedProgress();
+  const cnnGuidedProgress: GuidedCourseProgress[] = Object.values(guidedProgressMap);
 
   let readingProgress: ReadingProgress | undefined;
   try {
@@ -100,6 +105,7 @@ export function createLocalBackup(): BackupData {
       fontSize,
       cnnNewsArticles,
       cnnNewsLogs,
+      cnnGuidedProgress,
     },
   };
 }
@@ -173,6 +179,7 @@ export function validateBackupFileContent(rawContent: string): BackupValidationR
   const dailyLogs = Array.isArray(parsed.data.dailyLogs) ? parsed.data.dailyLogs : [];
   const vocabNotes = Array.isArray(parsed.data.vocabNotes) ? parsed.data.vocabNotes : [];
   const cnnNewsArticles = Array.isArray(parsed.data.cnnNewsArticles) ? parsed.data.cnnNewsArticles : [];
+  const cnnGuidedProgress = Array.isArray(parsed.data.cnnGuidedProgress) ? parsed.data.cnnGuidedProgress : [];
 
   return {
     isValid: true,
@@ -181,6 +188,7 @@ export function validateBackupFileContent(rawContent: string): BackupValidationR
       dailyLogs: dailyLogs.length,
       vocabNotes: vocabNotes.length,
       cnnNewsArticles: cnnNewsArticles.length,
+      cnnGuidedProgress: cnnGuidedProgress.length,
     },
     backupData: parsed as BackupData,
   };
@@ -236,6 +244,15 @@ export function restoreLocalBackup(backup: BackupData): { success: boolean; erro
       saveNewsStudyLogs(data.cnnNewsLogs);
     }
 
+    // Step 10 코스 진행도 복원
+    if (Array.isArray(data.cnnGuidedProgress)) {
+      const map: Record<string, GuidedCourseProgress> = {};
+      data.cnnGuidedProgress.forEach((p) => {
+        if (p && p.newsId) map[p.newsId] = p;
+      });
+      saveAllGuidedProgress(map);
+    }
+
     return { success: true };
   } catch (e: any) {
     console.error('Failed to restore local backup', e);
@@ -286,6 +303,13 @@ export function rollbackPreRestoreBackup(): { success: boolean; error?: string }
     }
     if (Array.isArray(data.cnnNewsLogs)) {
       saveNewsStudyLogs(data.cnnNewsLogs);
+    }
+    if (Array.isArray(data.cnnGuidedProgress)) {
+      const map: Record<string, GuidedCourseProgress> = {};
+      data.cnnGuidedProgress.forEach((p) => {
+        if (p && p.newsId) map[p.newsId] = p;
+      });
+      saveAllGuidedProgress(map);
     }
 
     // 롤백 완료 후 스냅샷 정리

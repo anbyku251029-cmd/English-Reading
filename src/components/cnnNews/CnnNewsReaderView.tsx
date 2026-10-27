@@ -32,6 +32,7 @@ import {
   splitIntoSentences,
 } from '../../utils/cnnNewsStorage';
 import { audioManager } from '../../utils/audio';
+import { CnnNewsGuidedCourseModal } from './CnnNewsGuidedCourseModal';
 
 interface CnnNewsReaderViewProps {
   articleId: string;
@@ -47,6 +48,7 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
   const [article, setArticle] = useState<CnnNewsArticle | null>(null);
   const [activeTab, setActiveTab] = useState<ReaderTab>('reading');
   const [fontSize, setFontSize] = useState<number>(16);
+  const [isGuidedModalOpen, setIsGuidedModalOpen] = useState(false);
 
   // 음성 재생 상태
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
@@ -335,8 +337,18 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
           </div>
         </div>
 
-        {/* 상태 변경 및 글꼴 조절 */}
+        {/* Guided C2 Study & 상태 변경 및 글꼴 조절 */}
         <div className="flex items-center space-x-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setIsGuidedModalOpen(true)}
+            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm transition cursor-pointer"
+            title="5단계 실전 C2 학습 코스 시작"
+          >
+            <span>🎯</span>
+            <span className="hidden sm:inline">Guided C2 Study (단계별 학습)</span>
+            <span className="sm:hidden">단계별 학습</span>
+          </button>
           {/* 상태 드롭다운 */}
           <select
             value={article.status}
@@ -1370,6 +1382,19 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
           </div>
         )}
       </main>
+
+      {/* Guided C2 Study 단계별 코스 모달 */}
+      <CnnNewsGuidedCourseModal
+        isOpen={isGuidedModalOpen}
+        onClose={() => {
+          setIsGuidedModalOpen(false);
+          refreshArticle();
+        }}
+        articleId={article.id}
+        onCourseCompleted={() => {
+          refreshArticle();
+        }}
+      />
     </div>
   );
 };

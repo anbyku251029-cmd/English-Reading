@@ -16,6 +16,7 @@ import {
   loadNewsArticles,
   deleteNewsArticle,
   calculateNewsStats,
+  getGuidedProgress,
   CnnNewsStatsSummary,
 } from '../../utils/cnnNewsStorage';
 import { CnnNewsRegisterModal } from './CnnNewsRegisterModal';
@@ -273,21 +274,28 @@ export const CnnNewsCategoryView: React.FC<CnnNewsCategoryViewProps> = ({
                         </span>
                         <span className="text-slate-500">{article.source}</span>
                       </div>
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          article.status === 'completed'
-                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                      <div className="flex items-center space-x-1.5">
+                        {getGuidedProgress(article.id).currentStep !== 'NOT_STARTED' && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950 text-red-300 border border-red-800">
+                            🎯 {getGuidedProgress(article.id).currentStep}
+                          </span>
+                        )}
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            article.status === 'completed'
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                              : article.status === 'in_progress'
+                              ? 'bg-amber-950 text-amber-400 border border-amber-800'
+                              : 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {article.status === 'completed'
+                            ? '완독 완료'
                             : article.status === 'in_progress'
-                            ? 'bg-amber-950 text-amber-400 border border-amber-800'
-                            : 'bg-slate-700 text-slate-300'
-                        }`}
-                      >
-                        {article.status === 'completed'
-                          ? '완독 완료'
-                          : article.status === 'in_progress'
-                          ? '학습 중'
-                          : '학습 전'}
-                      </span>
+                            ? '학습 중'
+                            : '학습 전'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* 제목 */}

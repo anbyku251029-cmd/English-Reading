@@ -153,6 +153,8 @@ export interface BackupData {
     // Step 09 C2 News Backup
     cnnNewsArticles?: CnnNewsArticle[];
     cnnNewsLogs?: CnnNewsStudyLog[];
+    // Step 10 Guided Course Progress
+    cnnGuidedProgress?: GuidedCourseProgress[];
   };
 }
 
@@ -164,6 +166,7 @@ export interface BackupValidationResult {
     dailyLogs: number;
     vocabNotes: number;
     cnnNewsArticles?: number;
+    cnnGuidedProgress?: number;
   };
   backupData?: BackupData;
 }
@@ -262,4 +265,37 @@ export interface CnnNewsStudyLog {
   hasDebate: boolean;
   lastActiveTime: string;
 }
+
+// ============================================================================
+// CNN News C2 Guided Course Types (Step 10)
+// ============================================================================
+
+export type GuidedCourseStep =
+  | 'NOT_STARTED'
+  | 'READING'
+  | 'ANALYSIS'
+  | 'COMPREHENSION'
+  | 'WRITING'
+  | 'REVIEW'
+  | 'COMPLETED';
+
+export interface GuidedCourseChecklist {
+  hasReadPassage: boolean;          // 1단계: 원문 읽기 및 문단 파악 여부
+  analyzedSentenceIds: string[];    // 2단계: 실제 분석한 문장 ID 목록
+  answeredQuestionIds: string[];    // 3단계: 실제 작성한 C2 질문 ID 목록
+  hasCompletedWriting: boolean;     // 4단계: 요약/논증문 작성 완료 여부
+  hasReviewedAll: boolean;          // 5단계: 최종 복습 및 완료 체크
+}
+
+export interface GuidedCourseProgress {
+  newsId: string;
+  currentStep: GuidedCourseStep;
+  highestStepReached: GuidedCourseStep;
+  lastParagraphIndex: number;
+  startedAt?: string;
+  completedAt?: string;
+  lastModifiedAt: string;
+  checklist: GuidedCourseChecklist;
+}
+
 
