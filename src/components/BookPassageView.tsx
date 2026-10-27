@@ -21,12 +21,21 @@ import {
   Circle,
   Pause,
   Info,
-  Mic,
-  Award,
+  ChevronLeft,
+  ChevronRight,
+  ShieldCheck,
 } from 'lucide-react';
 import { BookPreset } from '../data/presetBooks';
-import { StudyPack, KeyExpression, ShadowingFeedback } from '../types';
-import { audioManager, speechService } from '../utils/audio';
+import { StudyPack, KeyExpression } from '../types';
+import { audioManager } from '../utils/audio';
+
+interface VocabNoteItem {
+  word: string;
+  note: string;
+  bookTitle?: string;
+  chapterTitle?: string;
+  savedAt?: string;
+}
 
 interface BookPassageViewProps {
   book: BookPreset;
@@ -38,6 +47,10 @@ interface BookPassageViewProps {
   currentStep: number;
   onSendChatPrompt: (prompt: string) => void;
   onSelectChapter?: (chapterNumber: number) => void;
+  onNextChapter?: () => void;
+  onPrevChapter?: () => void;
+  hasPrevChapter?: boolean;
+  hasNextChapter?: boolean;
 }
 
 export const BookPassageView: React.FC<BookPassageViewProps> = ({
@@ -50,6 +63,10 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
   currentStep,
   onSendChatPrompt,
   onSelectChapter,
+  onNextChapter,
+  onPrevChapter,
+  hasPrevChapter,
+  hasNextChapter,
 }) => {
   const [activeTab, setActiveTab] = useState<'reading' | 'studypack' | 'shadowing'>('reading');
 
@@ -68,9 +85,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     setFontSize(clamped);
     try {
       localStorage.setItem('booky_font_size', String(clamped));
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   // Scroll Container Ref for Top / Bottom navigation
@@ -98,24 +113,37 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
   const [isPlayingAll, setIsPlayingAll] = useState<boolean>(false);
   const [currentReadingIndex, setCurrentReadingIndex] = useState<number | null>(null);
   const stopPlayAllRef = useRef<boolean>(false);
+  const isSpeakingGuardRef = useRef<boolean>(false);
   const sentenceRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // Load available English voices on mount
+  // Split passage into sentences or use paragraphs
+  const sentences = React.useMemo(() => {
+    if (book.paragraphs && book.paragraphs.length > 0) {
+      return book.paragraphs.map((p) => p.content.trim()).filter(Boolean);
+    }
+    return book.passage
+      .split(/(?<=[.?!])\s+(?=[A-Z"])/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [book.passage, book.paragraphs]);
+
+  // Load available English voices with multiple fallback checks (asynchronous browser loading)
   useEffect(() => {
     const updateVoices = () => {
       const voices = audioManager.getEnglishVoices();
-      setAvailableVoices(voices);
-      if (voices.length > 0 && !selectedVoiceName) {
-        // Prefer natural / google voices if present
-        const preferred =
-          voices.find(
-            (v) =>
-              v.name.includes('Natural') ||
-              v.name.includes('Google') ||
-              v.name.includes('Samantha') ||
-              v.name.includes('Karen')
-          ) || voices[0];
-        setSelectedVoiceName(preferred.name);
+      if (voices.length > 0) {
+        setAvailableVoices(voices);
+        if (!selectedVoiceName) {
+          const preferred =
+            voices.find(
+              (v) =>
+                v.name.includes('Natural') ||
+                v.name.includes('Google') ||
+                v.name.includes('Samantha') ||
+                v.name.includes('Karen')
+            ) || voices[0];
+          setSelectedVoiceName(preferred.name);
+        }
       }
     };
 
@@ -123,14 +151,63 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.onvoiceschanged = updateVoices;
     }
-  }, []);
+    const t1 = setTimeout(updateVoices, 300);
+    const t2 = setTimeout(updateVoices, 1000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [selectedVoiceName]);
 
   // Selected Sentence for Study Tools
   const [selectedSentence, setSelectedSentence] = useState<string>('');
+  const [selectedSentenceIndex, setSelectedSentenceIndex] = useState<number | null>(null);
   const [copiedSuccess, setCopiedSuccess] = useState<boolean>(false);
 
-  // Vocabulary Notes (Local Scratchpad)
-  const [vocabNotes, setVocabNotes] = useState<{ word: string; note: string }[]>(() => {
+  // Restore saved lastParagraphIndex on chapter load
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('booky_reading_progress');
+      if (saved) {
+        const progress = JSON.parse(saved);
+        if (
+          progress.bookId === book.dbBookId &&
+          progress.chapterId === book.dbChapterId &&
+          typeof progress.lastParagraphIndex === 'number' &&
+          progress.lastParagraphIndex > 0 &&
+          progress.lastParagraphIndex < sentences.length
+        ) {
+          const idx = progress.lastParagraphIndex;
+          setSelectedSentenceIndex(idx);
+          if (sentences[idx]) {
+            setSelectedSentence(sentences[idx]);
+          }
+          // Scroll to saved position smoothly
+          setTimeout(() => {
+            sentenceRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 350);
+        }
+      }
+    } catch {}
+  }, [book.dbBookId, book.dbChapterId, sentences]);
+
+  // Save reading position helper
+  const saveReadingPosition = (index: number) => {
+    if (book.dbBookId && book.dbChapterId) {
+      try {
+        const progress = {
+          bookId: book.dbBookId,
+          chapterId: book.dbChapterId,
+          lastParagraphIndex: index,
+          lastReadAt: new Date().toISOString(),
+        };
+        localStorage.setItem('booky_reading_progress', JSON.stringify(progress));
+      } catch {}
+    }
+  };
+
+  // Vocabulary Notes (Local Scratchpad with Book & Chapter Origin)
+  const [vocabNotes, setVocabNotes] = useState<VocabNoteItem[]>(() => {
     try {
       const saved = localStorage.getItem('booky_vocab_notes');
       return saved ? JSON.parse(saved) : [];
@@ -144,7 +221,14 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
   const handleAddVocabNote = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newWord.trim()) return;
-    const updated = [{ word: newWord.trim(), note: newNote.trim() }, ...vocabNotes];
+    const item: VocabNoteItem = {
+      word: newWord.trim(),
+      note: newNote.trim(),
+      bookTitle: book.title,
+      chapterTitle: book.chapter,
+      savedAt: new Date().toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }),
+    };
+    const updated = [item, ...vocabNotes];
     setVocabNotes(updated);
     setNewWord('');
     setNewNote('');
@@ -179,28 +263,8 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     } catch {}
   };
 
-  // Shadowing Studio state
+  // Target sentence for Shadowing
   const [targetSentence, setTargetSentence] = useState<string>('');
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
-  const [recordedTranscript, setRecordedTranscript] = useState<string>('');
-  const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
-  const [shadowingFeedback, setShadowingFeedback] = useState<ShadowingFeedback | null>(null);
-
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-
-  // Split passage into sentences or use paragraphs
-  const sentences = React.useMemo(() => {
-    if (book.paragraphs && book.paragraphs.length > 0) {
-      // Use clean contents of paragraphs
-      return book.paragraphs.map((p) => p.content.trim()).filter(Boolean);
-    }
-    return book.passage
-      .split(/(?<=[.?!])\s+(?=[A-Z"])/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }, [book.passage, book.paragraphs]);
 
   // Sync tab with 4-step learning flow
   useEffect(() => {
@@ -215,14 +279,14 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
   useEffect(() => {
     if (studyPack?.shadowingSentences?.[0]?.sentence) {
       setTargetSentence(studyPack.shadowingSentences[0].sentence);
-      setSelectedSentence(studyPack.shadowingSentences[0].sentence);
+      if (!selectedSentence) setSelectedSentence(studyPack.shadowingSentences[0].sentence);
     } else if (sentences[0]) {
       setTargetSentence(sentences[0]);
-      setSelectedSentence(sentences[0]);
+      if (!selectedSentence) setSelectedSentence(sentences[0]);
     }
-  }, [studyPack, sentences]);
+  }, [studyPack, sentences, selectedSentence]);
 
-  // Automatically scroll the currently read sentence into view
+  // Automatically scroll currently read sentence into view
   useEffect(() => {
     if (currentReadingIndex !== null && sentenceRefs.current[currentReadingIndex]) {
       sentenceRefs.current[currentReadingIndex]?.scrollIntoView({
@@ -232,9 +296,10 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     }
   }, [currentReadingIndex]);
 
-  // Stop playback when chapter or passage changes
+  // Hard stop speech when chapter or book changes
   useEffect(() => {
     stopPlayAllRef.current = true;
+    isSpeakingGuardRef.current = false;
     setIsPlayingAll(false);
     setIsSpeechPaused(false);
     audioManager.stop();
@@ -242,14 +307,19 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     setCurrentReadingIndex(null);
   }, [book.passage, book.currentChapterNumber, book.dbChapterId]);
 
-  // Web Speech: Play single sentence
+  // Web Speech: Play single sentence with race-condition guard
   const handlePlaySentence = async (text: string) => {
+    if (isSpeakingGuardRef.current) {
+      audioManager.stop();
+    }
+    isSpeakingGuardRef.current = true;
     setPlayingSentence(text);
     setIsSpeechPaused(false);
     try {
       await audioManager.speakSentence(text, speechRate, selectedVoiceName);
     } finally {
       setPlayingSentence(null);
+      isSpeakingGuardRef.current = false;
     }
   };
 
@@ -267,7 +337,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
 
     stopPlayAllRef.current = true;
     audioManager.stop();
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 80));
 
     setIsPlayingAll(true);
     setIsSpeechPaused(false);
@@ -278,6 +348,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
       const s = sentences[i];
       setCurrentReadingIndex(i);
       setPlayingSentence(s);
+      saveReadingPosition(i);
 
       try {
         await audioManager.speakSentence(s, speechRate, selectedVoiceName);
@@ -320,9 +391,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
       await navigator.clipboard.writeText(text);
       setCopiedSuccess(true);
       setTimeout(() => setCopiedSuccess(false), 2000);
-    } catch {
-      // fallback
-    }
+    } catch {}
   };
 
   // Quick save expression from selected sentence
@@ -332,72 +401,27 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     const expr: KeyExpression = {
       expression: clean,
       inContext: selectedSentence,
-      everydayMeaning: '본문에서 직접 스크랩한 표현',
+      everydayMeaning: `[${book.title} Ch.${book.currentChapterNumber || ''}] 직접 스크랩한 표현`,
       dailyExample: clean,
-      dailyExampleMeaning: '내가 저장한 학습 예문',
+      dailyExampleMeaning: '내가 저장한 원서 표현 예문',
     };
     onSaveExpression(expr);
   };
 
-  // Count words and chars
   const wordCount = selectedSentence
     ? selectedSentence.trim().split(/\s+/).filter(Boolean).length
     : 0;
   const charCount = selectedSentence ? selectedSentence.length : 0;
 
-  // Recording read aloud
-  const startRecording = async () => {
-    setShadowingFeedback(null);
-    setRecordedAudioUrl(null);
-    setRecordedTranscript('');
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        setRecordedAudioUrl(url);
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-
-      speechService.start((res) => {
-        if (res.transcript) {
-          setRecordedTranscript(res.transcript);
-        }
-      });
-    } catch (err) {
-      console.warn('Microphone permission denied:', err);
-      const input = prompt('마이크 권한을 허용하지 못했습니다. 읽으신 문장을 텍스트로 입력해 주세요:');
-      if (input) {
-        setRecordedTranscript(input);
-      }
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-    speechService.stop();
-  };
-
   const isExprSaved = (expr: string) => {
     return savedExpressions.some((e) => e.expression.toLowerCase() === expr.toLowerCase());
   };
+
+  const isPrologue =
+    book.currentChapterNumber === 0 || book.chapter.toLowerCase().includes('prologue');
+  const chapterDisplayLabel = isPrologue
+    ? 'Prologue'
+    : `Chapter ${book.currentChapterNumber || 1}`;
 
   return (
     <div className="flex flex-col h-full bg-slate-50/50 border-r border-slate-200">
@@ -411,16 +435,13 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
             </h2>
             {book.dbBookId && (
               <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full border border-amber-300/60">
-                SQLite 로컬 도서 #{book.bookNumber || ''}
+                SQLite 도서 #{book.bookNumber || ''}
               </span>
             )}
           </div>
 
-          <div className="flex items-center space-x-1.5 text-xs text-slate-500">
-            <span className="text-[11px] font-semibold text-slate-400 flex items-center space-x-1">
-              <Type className="w-3.5 h-3.5 text-slate-400" />
-              <span>글자:</span>
-            </span>
+          <div className="flex items-center space-x-2 text-xs text-slate-500">
+            {/* Font size control */}
             <div className="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
               <button
                 type="button"
@@ -490,7 +511,17 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
         {/* Tab 1: Book Passage Reading */}
         {activeTab === 'reading' && (
           <div className="max-w-2xl mx-auto space-y-4">
-            {/* Book metadata card */}
+            {/* Transparent Offline Notice Badge (Step 06-E) */}
+            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 flex items-start gap-2.5 text-xs text-amber-950">
+              <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-bold text-amber-900 mr-1">[로컬 독서 모드]</span>
+                외부 AI API 연결 없이, 로컬 SQLite 데이터베이스와 브라우저 내장 음성 합성(Web
+                Speech API)으로 안전하고 빠르게 구동됩니다.
+              </div>
+            </div>
+
+            {/* Book Metadata & Chapter Switcher Card */}
             <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/50">
@@ -501,52 +532,49 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
 
               <div>
                 <h3 className="font-bold text-slate-900 text-base sm:text-lg">{book.title}</h3>
-                <p className="text-xs text-amber-900 font-semibold mt-0.5">{book.chapter}</p>
-                {book.tagline && <p className="text-xs text-slate-500 mt-1">{book.tagline}</p>}
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs text-amber-900 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">
+                    {chapterDisplayLabel}
+                  </span>
+                  <span className="text-xs text-slate-600 font-semibold truncate">
+                    {book.chapter.replace(/^\d+\.\s*/, '')}
+                  </span>
+                </div>
               </div>
 
-              {/* Chapter Quick Switcher (If presets have chapters) */}
-              {book.chapters && book.chapters.length > 0 && (
-                <div className="pt-2.5 border-t border-slate-100">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
-                      <BookOpen className="w-3.5 h-3.5 text-amber-600" />
-                      <span>챕터 바로 이동:</span>
-                    </span>
-                    <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
-                      Ch.{book.currentChapterNumber || 1} / {book.chapters.length}
-                    </span>
-                  </div>
+              {/* Prev / Next Chapter Navigation Buttons (Step 06-D) */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={onPrevChapter}
+                  disabled={!hasPrevChapter}
+                  className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
+                  title="이전 챕터로 이동"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>이전 장</span>
+                </button>
 
-                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
-                    {book.chapters.map((ch) => {
-                      const isActive = (book.currentChapterNumber || 1) === ch.chapterNumber;
-                      return (
-                        <button
-                          key={ch.chapterNumber}
-                          type="button"
-                          onClick={() => onSelectChapter?.(ch.chapterNumber)}
-                          className={`py-1.5 px-1 rounded-xl text-xs font-bold transition flex flex-col items-center justify-center cursor-pointer ${
-                            isActive
-                              ? 'bg-amber-600 text-white shadow-xs ring-2 ring-amber-400/40'
-                              : 'bg-slate-100 hover:bg-amber-100/80 text-slate-700 border border-slate-200/70'
-                          }`}
-                          title={ch.chapter}
-                        >
-                          <span className="text-[9px] opacity-75">Ch.</span>
-                          <span>{ch.chapterNumber}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+                <span className="text-[11px] font-semibold text-slate-500">
+                  총 {sentences.length}개 {book.paragraphs ? '문단' : '문장'}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={onNextChapter}
+                  disabled={!hasNextChapter}
+                  className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
+                  title="다음 챕터로 이동"
+                >
+                  <span>다음 장</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
               {/* Web Speech Audio Controller & Navigation Bar */}
               <div className="pt-3 border-t border-slate-100 space-y-2.5">
                 {/* Voice & Speed Controls */}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
-                  {/* Voice Selector */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-[11px] font-semibold text-slate-500">영어 음성:</span>
                     {availableVoices.length > 0 ? (
@@ -566,7 +594,6 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                     )}
                   </div>
 
-                  {/* Speed Selector */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-[11px] font-semibold text-slate-500">속도:</span>
                     <div className="flex items-center gap-0.5 bg-white border border-slate-200 rounded-lg p-0.5">
@@ -667,10 +694,10 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 pt-1">
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 pt-0.5">
                   <Info className="w-3 h-3 text-slate-400 shrink-0" />
                   <span>
-                    브라우저 내장 Web Speech API로 음성을 재생합니다 (Gemini API 호출 없이 안전하게 구동).
+                    브라우저 Web Speech API로 오프라인 구동됩니다. 기기별로 지원 음성이 다를 수 있습니다.
                   </span>
                 </div>
               </div>
@@ -683,11 +710,16 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-amber-800 flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                      선택한 문장 분석 도구
+                      선택한 문장 도구
                     </span>
                     <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">
                       {wordCount}단어 ({charCount}자)
                     </span>
+                    {selectedSentenceIndex !== null && (
+                      <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded font-bold">
+                        위치 저장됨
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1">
@@ -725,7 +757,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                       title="표현 노트에 저장"
                     >
                       <Bookmark className="w-3 h-3" />
-                      <span>저장</span>
+                      <span>노트저장</span>
                     </button>
                     <a
                       href={`https://en.dict.naver.com/#/search?query=${encodeURIComponent(
@@ -734,7 +766,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                       target="_blank"
                       rel="noreferrer"
                       className="px-2 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition"
-                      title="사전에서 첫 단어 검색"
+                      title="사전에서 단어 검색"
                     >
                       <ExternalLink className="w-3 h-3" />
                       <span>사전</span>
@@ -742,22 +774,22 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                   </div>
                 </div>
 
-                <p className="font-serif-book text-xs text-slate-800 bg-amber-50/40 p-2 rounded-xl border border-amber-100 leading-relaxed">
+                <p className="font-serif-book text-xs text-slate-800 bg-amber-50/40 p-2.5 rounded-xl border border-amber-100 leading-relaxed">
                   "{selectedSentence}"
                 </p>
               </div>
             )}
 
-            {/* Reading text with Font Size Control toolbar */}
+            {/* Reading Text Body */}
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
               <div className="px-4 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-xs">
                 <span className="font-bold text-slate-700 flex items-center space-x-1.5">
                   <BookOpen className="w-3.5 h-3.5 text-amber-600" />
                   <span>
-                    {book.chapter} 본문 ({sentences.length}개 {book.paragraphs ? '문단' : '문장'})
+                    {chapterDisplayLabel} 본문 ({sentences.length}개 {book.paragraphs ? '문단' : '문장'})
                   </span>
                 </span>
-                <span className="text-[11px] text-slate-400">문장을 클릭하면 도구가 열립니다.</span>
+                <span className="text-[11px] text-slate-400">문장을 클릭하면 위치가 자동 저장됩니다.</span>
               </div>
 
               {/* Text Body */}
@@ -767,7 +799,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
               >
                 {sentences.map((sentence, idx) => {
                   const isCurrent = currentReadingIndex === idx;
-                  const isSelected = selectedSentence === sentence;
+                  const isSelected = selectedSentenceIndex === idx;
 
                   return (
                     <div
@@ -777,7 +809,9 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                       }}
                       onClick={() => {
                         setSelectedSentence(sentence);
+                        setSelectedSentenceIndex(idx);
                         setTargetSentence(sentence);
+                        saveReadingPosition(idx);
                       }}
                       className={`p-3.5 rounded-2xl transition-all duration-200 cursor-pointer border ${
                         isCurrent
@@ -786,7 +820,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                           ? 'bg-amber-50/70 border-amber-300 ring-1 ring-amber-300/60'
                           : 'bg-white hover:bg-slate-50/80 border-slate-200/60 hover:border-amber-200'
                       }`}
-                      title="클릭하여 학습 도구 사용 및 낭독 지정"
+                      title="클릭하여 학습 위치 저장 및 낭독 지정"
                     >
                       <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1 select-none">
                         <span className="font-mono font-bold text-amber-800/80">
@@ -807,7 +841,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                               handlePlaySentence(sentence);
                             }}
                             className="p-1 hover:text-amber-700 hover:bg-amber-100 rounded"
-                            title="이 부분만 바로 듣기"
+                            title="이 부분만 듣기"
                           >
                             <Volume2 className="w-3 h-3" />
                           </button>
@@ -819,6 +853,44 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                   );
                 })}
               </div>
+
+              {/* Bottom Chapter Switcher */}
+              <div className="p-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPrevChapter?.();
+                    scrollToTop();
+                  }}
+                  disabled={!hasPrevChapter}
+                  className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>이전 챕터로</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={scrollToTop}
+                  className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
+                >
+                  <ArrowUpCircle className="w-4 h-4" />
+                  <span>맨 위로</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNextChapter?.();
+                    scrollToTop();
+                  }}
+                  disabled={!hasNextChapter}
+                  className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
+                >
+                  <span>다음 챕터로</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -826,12 +898,12 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
         {/* Tab 2: Structured Study Pack & Offline Learning Aids */}
         {activeTab === 'studypack' && (
           <div className="max-w-2xl mx-auto space-y-5">
-            {/* Offline Learning Checklist (Step 05-F) */}
+            {/* Offline Learning Checklist (Step 06-D) */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>오늘의 원서 완독 체크리스트 (브라우저 로컬)</span>
+                  <span>오늘의 원서 완독 체크리스트 (로컬 브라우저)</span>
                 </h3>
                 <span className="text-[10px] text-slate-400">규칙 기반 오프라인 학습</span>
               </div>
@@ -872,14 +944,14 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
               </div>
             </div>
 
-            {/* Quick Vocabulary Scratchpad (Step 05-F) */}
+            {/* Quick Vocabulary Scratchpad with Origin (Step 06-D) */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Bookmark className="w-4 h-4 text-amber-600" />
                   <span>내 단어 &amp; 표현 메모장 ({vocabNotes.length}개)</span>
                 </h3>
-                <span className="text-[10px] text-slate-400">로컬 브라우저 영구 보관</span>
+                <span className="text-[10px] text-slate-400">책·챕터 출처 자동 기록</span>
               </div>
 
               <form onSubmit={handleAddVocabNote} className="flex gap-2">
@@ -906,12 +978,19 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
               </form>
 
               {vocabNotes.length > 0 && (
-                <div className="divide-y divide-slate-100 border-t border-slate-100 pt-2 max-h-48 overflow-y-auto">
+                <div className="divide-y divide-slate-100 border-t border-slate-100 pt-2 max-h-56 overflow-y-auto space-y-1">
                   {vocabNotes.map((v, i) => (
                     <div key={i} className="py-2 flex items-center justify-between text-xs">
                       <div>
-                        <span className="font-bold text-slate-900 mr-2">{v.word}</span>
-                        <span className="text-slate-500">{v.note}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900">{v.word}</span>
+                          <span className="text-slate-600">{v.note}</span>
+                        </div>
+                        {v.bookTitle && (
+                          <div className="text-[10px] text-amber-800/80 mt-0.5">
+                            📚 {v.bookTitle} — {v.chapterTitle}
+                          </div>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -927,7 +1006,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
               )}
             </div>
 
-            {/* Study Pack Expressions (If generated) */}
+            {/* Study Pack Expressions */}
             {studyPack && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -1005,7 +1084,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                 <span className="font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
                   🎯 오늘 낭독할 목표 문장
                 </span>
-                <span className="text-[11px]">원서에서 직접 선택하거나 아래 버튼 클릭</span>
+                <span className="text-[11px]">원서에서 직접 선택한 문장</span>
               </div>
 
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
@@ -1014,44 +1093,20 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <div className="flex items-center justify-between pt-2">
                 <button
+                  type="button"
                   onClick={() => handlePlaySentence(targetSentence)}
-                  className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition flex items-center space-x-1.5"
+                  className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer"
                 >
                   <Volume2 className="w-4 h-4" />
-                  <span>원어민 음성 듣기</span>
+                  <span>원어민 음성 듣기 (Web Speech)</span>
                 </button>
 
-                <div className="flex items-center space-x-2">
-                  {!isRecording ? (
-                    <button
-                      onClick={startRecording}
-                      className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-xs cursor-pointer"
-                    >
-                      <Mic className="w-4 h-4" />
-                      <span>소리 내어 녹음 시작</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={stopRecording}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 animate-pulse cursor-pointer"
-                    >
-                      <Square className="w-4 h-4 fill-current text-rose-400" />
-                      <span>녹음 완료</span>
-                    </button>
-                  )}
+                <div className="text-[11px] text-slate-400">
+                  외부 AI 연결 없이 안전하게 듣고 소리 내어 연습하세요 ✨
                 </div>
               </div>
-
-              {recordedAudioUrl && (
-                <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 flex items-center justify-between text-xs">
-                  <span className="font-semibold text-emerald-800">
-                    녹음 완료! 내 발음을 들어보세요:
-                  </span>
-                  <audio controls src={recordedAudioUrl} className="h-8" />
-                </div>
-              )}
             </div>
           </div>
         )}

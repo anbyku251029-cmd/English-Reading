@@ -195,6 +195,55 @@ export default function App() {
     initBookSession(updatedBook);
   };
 
+  // Next / Prev chapter navigation (Step 06-D)
+  const handleNextChapter = async () => {
+    if (currentBook.dbBookId) {
+      try {
+        const resCh = await fetch(`/api/books/${currentBook.dbBookId}/chapters`);
+        if (resCh.ok) {
+          const chData = await resCh.json();
+          const chapters = (chData.chapters || []).filter((c: any) => c.paragraph_count > 0);
+          const currentIndex = chapters.findIndex((c: any) => c.id === currentBook.dbChapterId);
+          if (currentIndex >= 0 && currentIndex < chapters.length - 1) {
+            const nextCh = chapters[currentIndex + 1];
+            handleSelectChapter(nextCh.chapter_number);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to switch to next chapter', e);
+      }
+    } else if (currentBook.chapters) {
+      const curNum = currentBook.currentChapterNumber || 1;
+      if (curNum < currentBook.chapters.length) {
+        handleSelectChapter(curNum + 1);
+      }
+    }
+  };
+
+  const handlePrevChapter = async () => {
+    if (currentBook.dbBookId) {
+      try {
+        const resCh = await fetch(`/api/books/${currentBook.dbBookId}/chapters`);
+        if (resCh.ok) {
+          const chData = await resCh.json();
+          const chapters = (chData.chapters || []).filter((c: any) => c.paragraph_count > 0);
+          const currentIndex = chapters.findIndex((c: any) => c.id === currentBook.dbChapterId);
+          if (currentIndex > 0) {
+            const prevCh = chapters[currentIndex - 1];
+            handleSelectChapter(prevCh.chapter_number);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to switch to prev chapter', e);
+      }
+    } else if (currentBook.chapters) {
+      const curNum = currentBook.currentChapterNumber || 1;
+      if (curNum > 1) {
+        handleSelectChapter(curNum - 1);
+      }
+    }
+  };
+
   // Send message in chat
   const handleSendMessage = async (text: string) => {
     const userMsg: Message = {
@@ -346,6 +395,10 @@ export default function App() {
                 handleSendMessage(prompt);
               }}
               onSelectChapter={handleSelectChapter}
+              onNextChapter={handleNextChapter}
+              onPrevChapter={handlePrevChapter}
+              hasPrevChapter={true}
+              hasNextChapter={true}
             />
           </section>
 

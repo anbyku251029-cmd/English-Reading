@@ -460,33 +460,42 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
                                         isCurrentActiveBook &&
                                         (currentBook.dbChapterId === ch.id ||
                                           currentBook.currentChapterNumber === ch.chapter_number);
+                                      const isZeroParagraphs = ch.paragraph_count === 0;
+                                      const isPrologue = ch.chapter_number === 0 || ch.title.toLowerCase().includes('prologue');
+                                      const chapterLabel = isPrologue ? 'Prologue' : `Ch.${ch.chapter_number}`;
+                                      const cleanTitle = isPrologue ? (ch.title.toLowerCase().includes('prologue') ? ch.title : 'Prologue') : ch.title.replace(/^\d+\.\s*/, '');
 
                                       return (
                                         <button
                                           key={ch.id}
                                           type="button"
-                                          disabled={isLoadingParagraphs}
+                                          disabled={isLoadingParagraphs || isZeroParagraphs}
                                           onClick={() => handleSelectChapterFromDb(book, ch)}
-                                          className={`px-2.5 py-2 text-left rounded-xl text-xs font-medium transition flex items-center justify-between border cursor-pointer ${
-                                            isCurrentCh
-                                              ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
-                                              : 'bg-slate-50 hover:bg-amber-50 hover:text-amber-900 border-slate-200/80 text-slate-800'
+                                          className={`px-2.5 py-2 text-left rounded-xl text-xs font-medium transition flex items-center justify-between border ${
+                                            isZeroParagraphs
+                                              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+                                              : isCurrentCh
+                                              ? 'bg-amber-600 text-white border-amber-700 shadow-xs cursor-pointer'
+                                              : 'bg-slate-50 hover:bg-amber-50 hover:text-amber-900 border-slate-200/80 text-slate-800 cursor-pointer'
                                           }`}
+                                          title={isZeroParagraphs ? '본문이 준비 중인 챕터입니다.' : ch.title}
                                         >
                                           <div className="truncate pr-2">
                                             <span className="font-bold mr-1">
-                                              Ch.{ch.chapter_number}
+                                              {chapterLabel}
                                             </span>
-                                            <span>{ch.title.replace(/^\d+\.\s*/, '')}</span>
+                                            <span>{cleanTitle}</span>
                                           </div>
                                           <span
                                             className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded ${
                                               isCurrentCh
                                                 ? 'bg-amber-700/60 text-amber-100'
+                                                : isZeroParagraphs
+                                                ? 'bg-slate-200 text-slate-500'
                                                 : 'bg-white text-slate-500 border border-slate-200/60'
                                             }`}
                                           >
-                                            {ch.paragraph_count}문단
+                                            {isZeroParagraphs ? '준비중' : `${ch.paragraph_count}문단`}
                                           </span>
                                         </button>
                                       );

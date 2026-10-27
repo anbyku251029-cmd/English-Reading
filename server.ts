@@ -176,19 +176,32 @@ app.get('/api/chapters/:id/paragraphs', (req, res) => {
       });
     }
 
-    // 본문 내용은 로그에 기록하지 않고 클라이언트에만 전달
+    // 본문 내용은 로그에 기록하지 않고 클라이언트에만 전달 (제어문자 정제 및 공백 필터링)
     const paragraphsQuery = `
       SELECT 
         id,
         chapter_id,
         paragraph_number,
-        content,
-        LENGTH(content) AS char_length
+        content
       FROM paragraphs
       WHERE chapter_id = ?
       ORDER BY paragraph_number ASC
     `;
-    const paragraphs = db.prepare(paragraphsQuery).all(chapterId);
+    const rawParagraphs = db.prepare(paragraphsQuery).all(chapterId) as any[];
+    const paragraphs = rawParagraphs
+      .map((p) => {
+        const cleaned = String(p.content || '')
+          .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+          .trim();
+        return {
+          id: p.id,
+          chapter_id: p.chapter_id,
+          paragraph_number: p.paragraph_number,
+          content: cleaned,
+          char_length: cleaned.length,
+        };
+      })
+      .filter((p) => p.char_length > 0);
 
     return res.json({
       ok: true,
