@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { DatabaseSync } from 'node:sqlite';
 import { GoogleGenAI } from '@google/genai';
 
 // 1. Safe Environment Variable Loading (.env first, then .env.local with priority)
@@ -19,6 +20,201 @@ const port = process.env.PORT || 3000;
 
 // Security: limit request body size to 2MB to prevent memory exhaustion
 app.use(express.json({ limit: '2mb' }));
+
+// ============================================================================
+// Local SQLite Database Connection (Read-Only)
+// ============================================================================
+let _booksDb: DatabaseSync | null = null;
+
+function getBooksDb(): DatabaseSync {
+  if (!_booksDb) {
+    const dbPath = path.resolve(__dirname, 'data', 'local_books', 'books.sqlite3');
+    if (!fs.existsSync(dbPath)) {
+      throw new Error('BOOKS_DB_NOT_FOUND');
+    }
+    // Strictly open in read-only mode to prevent any modification to original text
+    _booksDb = new DatabaseSync(dbPath, { readOnly: true });
+  }
+  return _booksDb;
+}
+
+// ============================================================================
+// Local Book APIs (Step 05)
+// ============================================================================
+
+// 1. GET /api/books - 도서 목록 조회
+app.get('/api/books', (_req, res) => {
+  try {
+    const db = getBooksDb();
+    const query = `
+      SELECT 
+        b.id,
+        b.book_number,
+        b.title,
+        b.author,
+        b.language,
+        COUNT(DISTINCT c.id) AS chapter_count,
+        COUNT(p.id) AS paragraph_count,
+        1 AS is_available
+      FROM books b
+      LEFT JOIN chapters c ON b.id = c.book_id
+      LEFT JOIN paragraphs p ON c.id = p.chapter_id
+      GROUP BY b.id
+      ORDER BY b.book_number ASC
+    `;
+    const books = db.prepare(query).all();
+    return res.json({
+      ok: true,
+      books,
+      total: books.length,
+    });
+  } catch (error: any) {
+    console.error('[API Error /api/books]:', error?.message || error);
+    if (error?.message === 'BOOKS_DB_NOT_FOUND') {
+      return res.status(503).json({
+        ok: false,
+        error: {
+          code: 'DATABASE_NOT_FOUND',
+          message: '로컬 도서 데이터베이스를 찾을 수 없습니다. (data/local_books/books.sqlite3)',
+        },
+      });
+    }
+    return res.status(500).json({
+      ok: false,
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: '도서 목록을 조회하는 중 서버 오류가 발생했습니다.',
+      },
+    });
+  }
+});
+
+// 2. GET /api/books/:id/chapters - 특정 도서의 챕터(장) 목록 조회
+app.get('/api/books/:id/chapters', (req, res) => {
+  const bookId = parseInt(req.params.id, 10);
+  if (isNaN(bookId) || bookId <= 0) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: 'INVALID_BOOK_ID', message: '유효한 도서 ID(숫자)를 입력해 주세요.' },
+    });
+  }
+
+  try {
+    const db = getBooksDb();
+    const book = db.prepare('SELECT id, book_number, title, author, language FROM books WHERE id = ?').get(bookId) as any;
+    if (!book) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'BOOK_NOT_FOUND', message: `ID가 ${bookId}인 도서를 찾을 수 없습니다.` },
+      });
+    }
+
+    const chaptersQuery = `
+      SELECT 
+        c.id,
+        c.book_id,
+        c.chapter_number,
+        c.title,
+        c.sequence_number,
+        COUNT(p.id) AS paragraph_count
+      FROM chapters c
+      LEFT JOIN paragraphs p ON c.id = p.chapter_id
+      WHERE c.book_id = ?
+      GROUP BY c.id
+      ORDER BY c.sequence_number ASC, c.chapter_number ASC
+    `;
+    const chapters = db.prepare(chaptersQuery).all(bookId);
+
+    return res.json({
+      ok: true,
+      book,
+      chapters,
+      total: chapters.length,
+    });
+  } catch (error: any) {
+    console.error('[API Error /api/books/:id/chapters]:', error?.message || error);
+    return res.status(500).json({
+      ok: false,
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: '도서의 장 목록을 조회하는 중 서버 오류가 발생했습니다.',
+      },
+    });
+  }
+});
+
+// 3. GET /api/chapters/:id/paragraphs - 특정 챕터의 문단 목록 조회
+app.get('/api/chapters/:id/paragraphs', (req, res) => {
+  const chapterId = parseInt(req.params.id, 10);
+  if (isNaN(chapterId) || chapterId <= 0) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: 'INVALID_CHAPTER_ID', message: '유효한 챕터 ID(숫자)를 입력해 주세요.' },
+    });
+  }
+
+  try {
+    const db = getBooksDb();
+    const chapter = db.prepare(`
+      SELECT 
+        c.id,
+        c.book_id,
+        c.chapter_number,
+        c.title AS chapter_title,
+        b.book_number,
+        b.title AS book_title,
+        b.author
+      FROM chapters c
+      JOIN books b ON c.book_id = b.id
+      WHERE c.id = ?
+    `).get(chapterId) as any;
+
+    if (!chapter) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'CHAPTER_NOT_FOUND', message: `ID가 ${chapterId}인 챕터를 찾을 수 없습니다.` },
+      });
+    }
+
+    // 본문 내용은 로그에 기록하지 않고 클라이언트에만 전달
+    const paragraphsQuery = `
+      SELECT 
+        id,
+        chapter_id,
+        paragraph_number,
+        content,
+        LENGTH(content) AS char_length
+      FROM paragraphs
+      WHERE chapter_id = ?
+      ORDER BY paragraph_number ASC
+    `;
+    const paragraphs = db.prepare(paragraphsQuery).all(chapterId);
+
+    return res.json({
+      ok: true,
+      chapter: {
+        id: chapter.id,
+        book_id: chapter.book_id,
+        chapter_number: chapter.chapter_number,
+        title: chapter.chapter_title,
+        book_title: chapter.book_title,
+        book_number: chapter.book_number,
+        author: chapter.author,
+      },
+      paragraphs,
+      total: paragraphs.length,
+    });
+  } catch (error: any) {
+    console.error('[API Error /api/chapters/:id/paragraphs]:', error?.message || error);
+    return res.status(500).json({
+      ok: false,
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: '챕터 문단을 조회하는 중 서버 오류가 발생했습니다.',
+      },
+    });
+  }
+});
 
 // Model configuration
 const GEMINI_TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';

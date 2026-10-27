@@ -54,109 +54,88 @@ export default function App() {
     }
   }, [savedExpressions]);
 
-  // Load study pack and start conversation for a book
+  // Load study pack and start conversation for a book (Safe local initialization)
   const initBookSession = useCallback(async (book: BookPreset) => {
-    setIsLoadingStudyPack(true);
+    setIsLoadingStudyPack(false);
     setStudyPack(null);
     setCurrentStep(1);
 
-    // Initial greeting from Booky
-    const initialUserMsg: Message = {
-      id: `user-init-${Date.now()}`,
-      role: 'user',
-      content: book.starterPrompt,
+    // Initial greeting from Booky in local context
+    const initialGreeting: Message = {
+      id: `model-init-${Date.now()}`,
+      role: 'model',
+      content: `반가워! 오늘 함께 읽을 책은 "${book.title}" (${book.chapter})이야.\n\n먼저 왼쪽 본문을 소리 내어 편안하게 읽어보자. 모르는 단어나 궁금한 문장이 있으면 언제든 물어봐!`,
       timestamp: new Date(),
+      step: 1,
     };
 
-    setMessages([initialUserMsg]);
-    setIsLoadingChat(true);
+    setMessages([initialGreeting]);
+    setIsLoadingChat(false);
 
-    try {
-      // Run both study pack extraction and initial chat in parallel
-      const [analysisRes, chatRes] = await Promise.all([
-        fetch('/api/analyze-passage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: book.title,
-            chapter: book.chapter,
-            passage: book.passage,
-            learnerLevel: book.levelKey,
-          }),
-        }),
-        fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [{ role: 'user', content: book.starterPrompt }],
-            bookContext: {
-              title: book.title,
-              chapter: book.chapter,
-              passage: book.passage,
-            },
-            learnerLevel: book.levelKey,
-          }),
-        }),
-      ]);
-
-      if (analysisRes.ok) {
-        const pack = await analysisRes.json();
-        setStudyPack(pack);
-      } else {
-        setStudyPack(null);
-      }
-
-      if (chatRes.ok) {
-        const chatData = await chatRes.json();
-        const modelMsg: Message = {
-          id: `model-${Date.now()}`,
-          role: 'model',
-          content: chatData.reply,
-          step: chatData.currentStep || 1,
-          timestamp: new Date(),
+    // Save reading progress to localStorage
+    if (book.dbBookId && book.dbChapterId) {
+      try {
+        const progress = {
+          bookId: book.dbBookId,
+          chapterId: book.dbChapterId,
+          lastParagraphIndex: 0,
+          lastReadAt: new Date().toISOString(),
         };
-        setMessages((prev) => [...prev, modelMsg]);
-        if (chatData.currentStep) {
-          setCurrentStep(chatData.currentStep);
-        }
-      } else {
-        const errData = await chatRes.json().catch(() => null);
-        const errMsg = errData?.error?.message || 'Gemini AI 연결에 실패했습니다. API 키 설정 또는 서버 상태를 확인해 주세요.';
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `model-err-${Date.now()}`,
-            role: 'model',
-            content: errMsg,
-            step: 1,
-            timestamp: new Date(),
-            isError: true,
-          },
-        ]);
+        localStorage.setItem('booky_reading_progress', JSON.stringify(progress));
+      } catch (e) {
+        console.warn('Failed to save reading progress', e);
       }
-    } catch (err: any) {
-      console.error('Initialization error:', err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `model-err-${Date.now()}`,
-          role: 'model',
-          content: err?.message || '서버와 통신할 수 없습니다. 로컬 서버 연결 상태를 확인해 주세요.',
-          step: 1,
-          timestamp: new Date(),
-          isError: true,
-        },
-      ]);
-    } finally {
-      setIsLoadingStudyPack(false);
-      setIsLoadingChat(false);
     }
   }, []);
 
-  // Initialize on mount
+  // Initialize on mount: check localStorage for saved reading progress
   useEffect(() => {
-    initBookSession(currentBook);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const restoreProgress = async () => {
+      try {
+        const saved = localStorage.getItem('booky_reading_progress');
+        if (saved) {
+          const progress = JSON.parse(saved);
+          if (progress.chapterId) {
+            const res = await fetch(`/api/chapters/${progress.chapterId}/paragraphs`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.ok && data.paragraphs && data.paragraphs.length > 0) {
+                const ch = data.chapter;
+                const bookPreset: BookPreset = {
+                  id: `sqlite-${ch.book_id}-${ch.id}`,
+                  dbBookId: ch.book_id,
+                  dbChapterId: ch.id,
+                  bookNumber: ch.book_number,
+                  title: ch.book_title,
+                  author: ch.author,
+                  series: 'Magic Tree House',
+                  level: 'Beginner (A2)',
+                  levelKey: 'beginner',
+                  chapter: ch.title,
+                  currentChapterNumber: ch.chapter_number,
+                  coverGradient: 'from-amber-600 via-amber-700 to-indigo-950',
+                  tagline: `Magic Tree House #${ch.book_number} — ${ch.book_title}`,
+                  passage: data.paragraphs.map((p: any) => p.content).join('\n\n'),
+                  paragraphs: data.paragraphs,
+                  starterPrompt: `오늘 함께 읽을 책은 Magic Tree House #${ch.book_number} "${ch.book_title}"의 "${ch.title}"이야!`,
+                  keyExpressionsPreview: ['로컬 SQLite 원서', `${data.paragraphs.length}개 문단`],
+                };
+                setCurrentBook(bookPreset);
+                initBookSession(bookPreset);
+                return;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to restore progress, fallback to preset book', e);
+      }
+      // fallback
+      initBookSession(PRESET_BOOKS[0]);
+    };
+
+    restoreProgress();
+  }, [initBookSession]);
 
   // Handle changing the current book
   const handleSelectBook = (newBook: BookPreset) => {
@@ -165,8 +144,39 @@ export default function App() {
     initBookSession(newBook);
   };
 
-  // Handle changing chapter within current book (Chapters 1~10)
-  const handleSelectChapter = (chapterNum: number) => {
+  // Handle changing chapter within current book
+  const handleSelectChapter = async (chapterNum: number) => {
+    // If it's an SQLite book with dbBookId
+    if (currentBook.dbBookId) {
+      try {
+        const resCh = await fetch(`/api/books/${currentBook.dbBookId}/chapters`);
+        if (resCh.ok) {
+          const chData = await resCh.json();
+          const target = chData.chapters?.find((c: any) => c.chapter_number === chapterNum);
+          if (target) {
+            const resPar = await fetch(`/api/chapters/${target.id}/paragraphs`);
+            if (resPar.ok) {
+              const parData = await resPar.json();
+              const updatedBook: BookPreset = {
+                ...currentBook,
+                dbChapterId: target.id,
+                chapter: target.title,
+                currentChapterNumber: target.chapter_number,
+                passage: parData.paragraphs.map((p: any) => p.content).join('\n\n'),
+                paragraphs: parData.paragraphs,
+              };
+              setCurrentBook(updatedBook);
+              initBookSession(updatedBook);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to switch chapter from db:', e);
+      }
+    }
+
+    // Fallback for preset chapters
     if (!currentBook.chapters) return;
     const targetChapter = currentBook.chapters.find((c) => c.chapterNumber === chapterNum);
     if (!targetChapter) return;

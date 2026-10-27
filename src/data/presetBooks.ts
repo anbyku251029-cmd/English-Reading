@@ -9,6 +9,9 @@ export interface ChapterItem {
 
 export interface BookPreset {
   id: string;
+  dbBookId?: number;
+  dbChapterId?: number;
+  bookNumber?: number;
   title: string;
   author: string;
   series?: string;
@@ -20,6 +23,7 @@ export interface BookPreset {
   coverGradient: string;
   tagline: string;
   passage: string;
+  paragraphs?: { id: number; paragraph_number: number; content: string; char_length: number }[];
   starterPrompt: string;
   keyExpressionsPreview: string[];
 }

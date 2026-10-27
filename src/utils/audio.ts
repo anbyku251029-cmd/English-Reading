@@ -3,15 +3,25 @@
 class AudioManager {
   private currentAudio: HTMLAudioElement | null = null;
 
+  isSpeechSupported(): boolean {
+    return typeof window !== 'undefined' && 'speechSynthesis' in window;
+  }
+
+  getEnglishVoices(): SpeechSynthesisVoice[] {
+    if (!this.isSpeechSupported()) return [];
+    const voices = window.speechSynthesis.getVoices();
+    return voices.filter((v) => v.lang.startsWith('en'));
+  }
+
   // General speak method
-  async speak(text: string, voiceName: string = 'Kore'): Promise<void> {
-    return this.speakSentence(text);
+  async speak(text: string, voiceName?: string, rate: number = 0.92): Promise<void> {
+    return this.speakSentence(text, rate, voiceName);
   }
 
   // Fast sentence speak for continuous reading with zero network latency
-  speakSentence(text: string, rate: number = 0.92): Promise<void> {
+  speakSentence(text: string, rate: number = 0.92, voiceName?: string): Promise<void> {
     return new Promise((resolve) => {
-      if (!('speechSynthesis' in window)) {
+      if (!this.isSpeechSupported()) {
         resolve();
         return;
       }
@@ -22,12 +32,20 @@ class AudioManager {
       utterance.rate = rate;
 
       const voices = window.speechSynthesis.getVoices();
-      const enVoice = voices.find(
-        (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Karen'))
-      ) || voices.find((v) => v.lang.startsWith('en'));
+      let chosenVoice: SpeechSynthesisVoice | undefined;
 
-      if (enVoice) {
-        utterance.voice = enVoice;
+      if (voiceName) {
+        chosenVoice = voices.find((v) => v.name === voiceName);
+      }
+
+      if (!chosenVoice) {
+        chosenVoice = voices.find(
+          (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Karen'))
+        ) || voices.find((v) => v.lang.startsWith('en'));
+      }
+
+      if (chosenVoice) {
+        utterance.voice = chosenVoice;
       }
 
       let done = false;
@@ -46,7 +64,7 @@ class AudioManager {
 
       // Safety fallback in case browser misses onend event
       const wordCount = text.trim().split(/\s+/).length;
-      const timeoutMs = Math.max(1200, (wordCount / 2.2) * 1000 + 1500);
+      const timeoutMs = Math.max(1200, (wordCount / 2.0) * 1000 + 1500);
       const timer = setTimeout(onDone, timeoutMs);
 
       utterance.onend = () => {
@@ -58,34 +76,21 @@ class AudioManager {
     });
   }
 
+  pause() {
+    if (this.isSpeechSupported() && window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+    }
+  }
+
+  resume() {
+    if (this.isSpeechSupported() && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+  }
+
   // Fallback to browser's native SpeechSynthesis
   fallbackWebSpeech(text: string): Promise<void> {
-    return new Promise((resolve) => {
-      if (!('speechSynthesis' in window)) {
-        console.warn('Speech synthesis not supported');
-        resolve();
-        return;
-      }
-
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      utterance.rate = 0.9; // Slightly gentle for learners
-
-      // Try finding a natural English voice
-      const voices = window.speechSynthesis.getVoices();
-      const preferredVoice = voices.find(
-        (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha'))
-      ) || voices.find((v) => v.lang.startsWith('en'));
-
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
-
-      utterance.onend = () => resolve();
-      utterance.onerror = () => resolve();
-      window.speechSynthesis.speak(utterance);
-    });
+    return this.speakSentence(text);
   }
 
   stop() {
@@ -94,7 +99,7 @@ class AudioManager {
       this.currentAudio.currentTime = 0;
       this.currentAudio = null;
     }
-    if ('speechSynthesis' in window) {
+    if (this.isSpeechSupported()) {
       window.speechSynthesis.cancel();
     }
   }
