@@ -5,6 +5,7 @@ export interface Message {
   step?: number;
   timestamp: Date;
   targetSentence?: string;
+  isError?: boolean;
 }
 
 export interface KeyExpression {

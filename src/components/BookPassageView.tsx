@@ -86,6 +86,15 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
       .filter(Boolean);
   }, [book.passage]);
 
+  // Sync tab with 4-step learning flow
+  useEffect(() => {
+    if (currentStep === 2) {
+      setActiveTab('shadowing');
+    } else if (currentStep === 1) {
+      setActiveTab((prev) => (prev === 'shadowing' ? 'studypack' : prev));
+    }
+  }, [currentStep]);
+
   // Set default target sentence when studyPack arrives
   useEffect(() => {
     if (studyPack?.shadowingSentences?.[0]?.sentence) {
@@ -235,15 +244,22 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
           bookTitle: book.title,
         }),
       });
-      const data = await res.json();
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.error?.message || `섀도잉 평가 실패 (${res.status})`);
+      }
+
       setShadowingFeedback(data);
 
       // Also tell Booky in chat
       onSendChatPrompt(
         `[Step 2 섀도잉 완료] "${targetSentence}" 문장을 소리 내어 연습했어요! Booky 코치님, 발음과 리듬 피드백을 부탁드려요.`
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to get feedback:', err);
+      alert(err?.message || '섀도잉 피드백 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
     } finally {
       setIsEvaluating(false);
     }

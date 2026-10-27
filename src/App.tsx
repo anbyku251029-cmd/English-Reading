@@ -4,8 +4,10 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Bot } from 'lucide-react';
 import { Header } from './components/Header';
 import { BookPassageView } from './components/BookPassageView';
+import { BookyChat } from './components/BookyChat';
 import { BookSelectorModal } from './components/BookSelectorModal';
 import { NotebookDrawer } from './components/NotebookDrawer';
 import { SettingsModal } from './components/SettingsModal';
@@ -26,6 +28,7 @@ export default function App() {
   // Chat conversation
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingChat, setIsLoadingChat] = useState<boolean>(false);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
 
   // Modals & Drawers
   const [isBookModalOpen, setIsBookModalOpen] = useState<boolean>(false);
@@ -99,6 +102,8 @@ export default function App() {
       if (analysisRes.ok) {
         const pack = await analysisRes.json();
         setStudyPack(pack);
+      } else {
+        setStudyPack(null);
       }
 
       if (chatRes.ok) {
@@ -114,18 +119,32 @@ export default function App() {
         if (chatData.currentStep) {
           setCurrentStep(chatData.currentStep);
         }
+      } else {
+        const errData = await chatRes.json().catch(() => null);
+        const errMsg = errData?.error?.message || 'Gemini AI 연결에 실패했습니다. API 키 설정 또는 서버 상태를 확인해 주세요.';
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `model-err-${Date.now()}`,
+            role: 'model',
+            content: errMsg,
+            step: 1,
+            timestamp: new Date(),
+            isError: true,
+          },
+        ]);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Initialization error:', err);
-      // Fallback welcome message if network error
       setMessages((prev) => [
         ...prev,
         {
-          id: `model-${Date.now()}`,
+          id: `model-err-${Date.now()}`,
           role: 'model',
-          content: `안녕! 나는 너의 영어 원서 & 회화 코치 Booky야! 📚✨\n오늘 함께 읽을 책은 **${book.title}** (${book.chapter})이야.\n\n먼저 억지로 한 줄 한 줄 한국어로 번역하려 하지 말고, 숲속의 늦은 오후 햇살과 잭, 애니의 표정을 머릿속에 떠올려보자!\n\n[STEP: 1] 원서 속 핵심 표현 2~3가지를 함께 살펴볼까? 준비되면 '준비됐어!'라고 말해줘!`,
+          content: err?.message || '서버와 통신할 수 없습니다. 로컬 서버 연결 상태를 확인해 주세요.',
           step: 1,
           timestamp: new Date(),
+          isError: true,
         },
       ]);
     } finally {
@@ -195,11 +214,12 @@ export default function App() {
         }),
       });
 
+      const data = await res.json().catch(() => null);
+
       if (!res.ok) {
-        throw new Error(`Chat API error: ${res.status}`);
+        throw new Error(data?.error?.message || `AI 연결 오류 (${res.status})`);
       }
 
-      const data = await res.json();
       const modelMsg: Message = {
         id: `model-${Date.now()}`,
         role: 'model',
@@ -212,16 +232,17 @@ export default function App() {
       if (data.currentStep) {
         setCurrentStep(data.currentStep);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to send message:', err);
       setMessages((prev) => [
         ...prev,
         {
           id: `model-err-${Date.now()}`,
           role: 'model',
-          content: '죄송해요, 일시적인 네트워크 오류가 발생했습니다. 잠시 후 다시 말씀해 주세요! 💡',
+          content: err?.message || '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
           step: currentStep,
           timestamp: new Date(),
+          isError: true,
         },
       ]);
     } finally {
@@ -253,6 +274,9 @@ export default function App() {
   // Switch step directly from header
   const handleSelectStep = (step: number) => {
     setCurrentStep(step);
+    if (step >= 3) {
+      setIsChatOpen(true);
+    }
     const stepPrompts: Record<number, string> = {
       1: '[Step 1 원서 분석 & 핵심 표현] 원서 본문 속 핵심 일상 표현을 확인하고 싶어!',
       2: '[Step 2 낭독 & 섀도잉] 소리 내어 문장을 읽고 발음과 호흡 리듬을 연습할래!',
@@ -266,7 +290,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900 font-sans">
-      {/* Header with 4-step progress */}
+      {/* Header with 4-step progress and AI coach toggle */}
       <Header
         currentBook={currentBook}
         currentStep={currentStep}
@@ -276,26 +300,93 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onExportNotes={() => setIsExportOpen(true)}
         savedExpressionsCount={savedExpressions.length}
+        isChatOpen={isChatOpen}
+        onToggleChat={() => setIsChatOpen((prev) => !prev)}
       />
 
       {/* Main Workspace */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-3 sm:p-4 md:p-6 flex flex-col min-h-0">
-        <section className="flex-1 min-h-[600px] lg:h-[calc(100vh-100px)] rounded-3xl overflow-hidden shadow-sm bg-white border border-slate-200/80 flex flex-col">
-          <BookPassageView
-            book={currentBook}
-            studyPack={studyPack}
-            isLoadingStudyPack={isLoadingStudyPack}
-            onSelectShadowingSentence={(sentence) => {
-              setCurrentStep(2);
-            }}
-            onSaveExpression={handleSaveExpression}
-            savedExpressions={savedExpressions}
-            currentStep={currentStep}
-            onSendChatPrompt={handleSendMessage}
-            onSelectChapter={handleSelectChapter}
-          />
-        </section>
+      <main
+        className={`flex-1 w-full mx-auto p-3 sm:p-4 md:p-6 flex flex-col min-h-0 transition-all ${
+          isChatOpen ? 'max-w-7xl' : 'max-w-4xl'
+        }`}
+      >
+        <div
+          className={`flex-1 min-h-0 grid grid-cols-1 ${
+            isChatOpen ? 'lg:grid-cols-12 gap-4 lg:gap-5' : ''
+          }`}
+        >
+          {/* Left: Book Reading & Passage View */}
+          <section
+            className={`rounded-3xl overflow-hidden shadow-sm bg-white border border-slate-200/80 flex flex-col min-h-[500px] ${
+              isChatOpen ? 'lg:col-span-7 xl:col-span-7 lg:h-[calc(100vh-120px)]' : 'h-[calc(100vh-120px)]'
+            }`}
+          >
+            <BookPassageView
+              book={currentBook}
+              studyPack={studyPack}
+              isLoadingStudyPack={isLoadingStudyPack}
+              onSelectShadowingSentence={(sentence) => {
+                setCurrentStep(2);
+              }}
+              onSaveExpression={handleSaveExpression}
+              savedExpressions={savedExpressions}
+              currentStep={currentStep}
+              onSendChatPrompt={(prompt) => {
+                setIsChatOpen(true);
+                handleSendMessage(prompt);
+              }}
+              onSelectChapter={handleSelectChapter}
+            />
+          </section>
+
+          {/* Right: AI Coach Booky Chat (Desktop side-by-side) */}
+          {isChatOpen && (
+            <section className="hidden lg:flex lg:col-span-5 xl:col-span-5 rounded-3xl overflow-hidden shadow-sm bg-white border border-slate-200/80 flex-col lg:h-[calc(100vh-120px)]">
+              <BookyChat
+                messages={messages}
+                isLoading={isLoadingChat}
+                onSendMessage={handleSendMessage}
+                currentBook={currentBook}
+                currentStep={currentStep}
+                onSetStep={handleSelectStep}
+                learnerLevel={learnerLevel}
+                onClose={() => setIsChatOpen(false)}
+              />
+            </section>
+          )}
+        </div>
       </main>
+
+      {/* Mobile AI Coach Drawer / Overlay (when isChatOpen on mobile) */}
+      {isChatOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden flex justify-end bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-lg h-full bg-white shadow-2xl flex flex-col border-l border-slate-200">
+            <BookyChat
+              messages={messages}
+              isLoading={isLoadingChat}
+              onSendMessage={handleSendMessage}
+              currentBook={currentBook}
+              currentStep={currentStep}
+              onSetStep={handleSelectStep}
+              learnerLevel={learnerLevel}
+              onClose={() => setIsChatOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Floating Button to open AI Coach when closed */}
+      {!isChatOpen && (
+        <button
+          type="button"
+          onClick={() => setIsChatOpen(true)}
+          className="lg:hidden fixed bottom-5 right-5 z-30 p-3.5 bg-amber-500 hover:bg-amber-600 text-white rounded-full shadow-lg flex items-center space-x-1.5 transition cursor-pointer"
+          title="AI 코치 열기"
+        >
+          <Bot className="w-5 h-5" />
+          <span className="text-xs font-bold">AI 코치</span>
+        </button>
+      )}
 
       {/* Modals & Drawers */}
       <BookSelectorModal

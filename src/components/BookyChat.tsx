@@ -13,6 +13,8 @@ import {
   HelpCircle,
   MessageSquare,
   PenTool,
+  X,
+  AlertCircle,
 } from 'lucide-react';
 import { Message, LearnerLevel } from '../types';
 import { BookPreset } from '../data/presetBooks';
@@ -26,6 +28,7 @@ interface BookyChatProps {
   currentStep: number;
   onSetStep: (step: number) => void;
   learnerLevel: LearnerLevel;
+  onClose?: () => void;
 }
 
 export const BookyChat: React.FC<BookyChatProps> = ({
@@ -36,6 +39,7 @@ export const BookyChat: React.FC<BookyChatProps> = ({
   currentStep,
   onSetStep,
   learnerLevel,
+  onClose,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isListeningMic, setIsListeningMic] = useState(false);
@@ -143,10 +147,20 @@ export const BookyChat: React.FC<BookyChatProps> = ({
           </div>
         </div>
 
-        <div className="text-right">
+        <div className="flex items-center space-x-2">
           <span className="text-xs font-extrabold text-amber-700 bg-amber-50 border border-amber-200/60 px-2.5 py-1 rounded-full">
             Step {currentStep} 진행 중
           </span>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+              title="AI 코치 패널 닫기"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -166,10 +180,18 @@ export const BookyChat: React.FC<BookyChatProps> = ({
                 className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
                   isUser
                     ? 'bg-slate-900 text-white'
+                    : message.isError
+                    ? 'bg-rose-500 text-white'
                     : 'bg-gradient-to-tr from-amber-500 to-orange-500 text-white'
                 }`}
               >
-                {isUser ? <User className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+                {isUser ? (
+                  <User className="w-4 h-4" />
+                ) : message.isError ? (
+                  <AlertCircle className="w-4 h-4" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
               </div>
 
               {/* Message Content */}
@@ -177,16 +199,27 @@ export const BookyChat: React.FC<BookyChatProps> = ({
                 className={`max-w-[85%] sm:max-w-[78%] rounded-2xl p-4 shadow-xs relative text-xs sm:text-sm leading-relaxed ${
                   isUser
                     ? 'bg-slate-900 text-white rounded-tr-xs'
+                    : message.isError
+                    ? 'bg-rose-50 text-rose-900 border border-rose-200 rounded-tl-xs'
                     : 'bg-white text-slate-800 border border-slate-200/80 rounded-tl-xs'
                 }`}
               >
-                {/* Step Tag */}
-                {!isUser && message.step && (
+                {/* Step Tag or Error Tag */}
+                {message.isError ? (
                   <div className="mb-2 flex items-center space-x-1.5">
-                    <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded-md">
-                      Step {message.step}
+                    <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center space-x-1">
+                      <AlertCircle className="w-3 h-3 text-rose-600" />
+                      <span>연결 / 안내 메시지</span>
                     </span>
                   </div>
+                ) : (
+                  !isUser && message.step && (
+                    <div className="mb-2 flex items-center space-x-1.5">
+                      <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                        Step {message.step}
+                      </span>
+                    </div>
+                  )
                 )}
 
                 {/* Formatted Text */}
@@ -194,8 +227,8 @@ export const BookyChat: React.FC<BookyChatProps> = ({
                   {message.content.replace(/\[STEP:\s*[1-4]\]/gi, '').trim()}
                 </div>
 
-                {/* Audio button for Coach messages */}
-                {!isUser && (
+                {/* Audio button for Coach messages (hide for error messages) */}
+                {!isUser && !message.isError && (
                   <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
                     <button
                       onClick={() => handlePlayAudio(message.content)}
