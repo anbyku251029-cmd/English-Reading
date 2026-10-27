@@ -119,7 +119,8 @@ git add vite.config.ts
 if (Test-Path tailwind.config.js) { git add tailwind.config.js }
 git add index.html
 git add server.ts
-git add "*완료보고서*" 2>$null
+# 한글 디렉터리(완료보고서/) 안전 스테이징
+python -c "import subprocess, os; [subprocess.run(['git', 'add', f]) for f in os.listdir('.') if '완료보고서' in f]" 2>$null
 
 # 이전 커밋에 잘못 포함되었을 수 있는 저작권 pdf 제거 확인
 git rm --cached public/assets/aistudio/01_Dinosaurs_Before_Dark_-_Mary_Pope_Osborne_47a1ea99.pdf 2>$null
