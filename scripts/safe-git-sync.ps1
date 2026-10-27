@@ -116,10 +116,10 @@ git add package.json
 git add package-lock.json
 git add tsconfig.json
 git add vite.config.ts
-git add tailwind.config.js
+if (Test-Path tailwind.config.js) { git add tailwind.config.js }
 git add index.html
 git add server.ts
-git add 완료보고서/ 2>$null
+git add "*완료보고서*" 2>$null
 
 # 이전 커밋에 잘못 포함되었을 수 있는 저작권 pdf 제거 확인
 git rm --cached public/assets/aistudio/01_Dinosaurs_Before_Dark_-_Mary_Pope_Osborne_47a1ea99.pdf 2>$null
