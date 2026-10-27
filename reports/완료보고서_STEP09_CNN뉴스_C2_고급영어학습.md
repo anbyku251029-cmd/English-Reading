@@ -161,4 +161,4 @@
   - 사용자가 업로드한 CNN 뉴스 자료 및 작성된 개인 학습 노트는 Git 원격 저장소에 커밋되지 않으며 100% 로컬 브라우저에만 보관됩니다.
 - **자동 동기화 스크립트**: `scripts/safe-git-sync.ps1`
 - **원격 저장소**: `https://github.com/anbyku251029-cmd/English-Reading` (`origin/main`)
-- **최신 Git 커밋 SHA**: *(동기화 후 기록)*
+- **최신 Git 커밋 SHA**: b9ac8d2846dad4dd3ff405361ab3044eca789df
