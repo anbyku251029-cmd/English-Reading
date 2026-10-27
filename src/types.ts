@@ -9,11 +9,22 @@ export interface Message {
 }
 
 export interface KeyExpression {
+  id?: string;
   expression: string;
   inContext: string;
   everydayMeaning: string;
   dailyExample: string;
   dailyExampleMeaning: string;
+  bookId?: number | string;
+  bookTitle?: string;
+  chapterId?: number | string;
+  chapterTitle?: string;
+  paragraphNumber?: number;
+  savedAt?: string;
+  userNote?: string;
+  reviewStatus?: 'new' | 'remembered' | 'review_again' | 'hard';
+  lastReviewedAt?: string;
+  reviewCount?: number;
 }
 
 export interface ShadowingSentence {
@@ -75,4 +86,29 @@ export interface ReadingProgress {
   chapterId: number;
   lastParagraphIndex: number;
   lastReadAt: string;
+}
+
+// Daily Study Log & Stats Types (Step 07)
+export interface DailyStudyLog {
+  id: string; // e.g. "2026-10-27-31-258"
+  date: string; // YYYY-MM-DD
+  bookId: number | string;
+  bookTitle: string;
+  chapterId: number | string;
+  chapterTitle: string;
+  readParagraphsCount: number;
+  savedExpressionsCount: number;
+  isChapterCompleted?: boolean;
+  lastActiveTime: string;
+}
+
+export interface LearningStatsSummary {
+  totalStudyDays: number;
+  todayChapters: { bookTitle: string; chapterTitle: string }[];
+  uniqueChaptersVisited: number;
+  completedChaptersCount: number;
+  totalSavedExpressions: number;
+  reviewedExpressionsCount: number;
+  completedBooksCount: number;
+  dailyLogs: DailyStudyLog[];
 }

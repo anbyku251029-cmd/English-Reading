@@ -14,6 +14,12 @@ import { SettingsModal } from './components/SettingsModal';
 import { ExportNotesModal } from './components/ExportNotesModal';
 import { PRESET_BOOKS, BookPreset } from './data/presetBooks';
 import { Message, StudyPack, KeyExpression, LearnerLevel } from './types';
+import {
+  loadSavedExpressions,
+  addOrUpdateExpression,
+  saveExpressions,
+  recordChapterActivity,
+} from './utils/studyStorage';
 
 export default function App() {
   const [currentBook, setCurrentBook] = useState<BookPreset>(PRESET_BOOKS[0]);
@@ -36,22 +42,13 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
 
-  // Saved expressions in Notebook (persist to localStorage)
+  // Saved expressions in Notebook (persist to localStorage via studyStorage)
   const [savedExpressions, setSavedExpressions] = useState<KeyExpression[]>(() => {
-    try {
-      const saved = localStorage.getItem('booky_saved_expressions');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+    return loadSavedExpressions();
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('booky_saved_expressions', JSON.stringify(savedExpressions));
-    } catch (e) {
-      console.warn('Failed to save expressions to localStorage', e);
-    }
+    saveExpressions(savedExpressions);
   }, [savedExpressions]);
 
   // Load study pack and start conversation for a book (Safe local initialization)
@@ -72,7 +69,7 @@ export default function App() {
     setMessages([initialGreeting]);
     setIsLoadingChat(false);
 
-    // Save reading progress to localStorage
+    // Save reading progress to localStorage and record daily activity log
     if (book.dbBookId && book.dbChapterId) {
       try {
         const progress = {
@@ -85,6 +82,15 @@ export default function App() {
       } catch (e) {
         console.warn('Failed to save reading progress', e);
       }
+
+      recordChapterActivity(
+        book.dbBookId,
+        book.title,
+        book.dbChapterId,
+        book.chapter,
+        1,
+        false
+      );
     }
   }, []);
 
@@ -309,24 +315,68 @@ export default function App() {
     }
   };
 
-  // Save expression to notebook
+  // Save expression to notebook with origin tracking (Step 07-C)
   const handleSaveExpression = (expr: KeyExpression) => {
-    setSavedExpressions((prev) => {
-      const exists = prev.some((e) => e.expression.toLowerCase() === expr.expression.toLowerCase());
-      if (exists) {
-        return prev.filter((e) => e.expression.toLowerCase() !== expr.expression.toLowerCase());
-      }
-      return [...prev, expr];
-    });
+    const enriched: KeyExpression = {
+      ...expr,
+      bookId: currentBook.dbBookId || currentBook.id,
+      bookTitle: currentBook.title,
+      chapterId: currentBook.dbChapterId || currentBook.currentChapterNumber,
+      chapterTitle: currentBook.chapter,
+    };
+    const updated = addOrUpdateExpression(enriched);
+    setSavedExpressions(updated);
   };
 
   const handleRemoveExpression = (expression: string) => {
-    setSavedExpressions((prev) => prev.filter((e) => e.expression !== expression));
+    setSavedExpressions((prev) => {
+      const updated = prev.filter((e) => e.expression !== expression);
+      saveExpressions(updated);
+      return updated;
+    });
   };
 
   const handleClearExpressions = () => {
     if (confirm('저장된 표현 노트를 모두 비우시겠습니까?')) {
       setSavedExpressions([]);
+      saveExpressions([]);
+    }
+  };
+
+  // Jump to book and chapter from Notebook (Step 07-C)
+  const handleJumpToPassage = async (bookId?: number | string, chapterId?: number | string) => {
+    if (!chapterId) return;
+    try {
+      const res = await fetch(`/api/chapters/${chapterId}/paragraphs`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && data.paragraphs && data.paragraphs.length > 0) {
+          const ch = data.chapter;
+          const bookPreset: BookPreset = {
+            id: `sqlite-${ch.book_id}-${ch.id}`,
+            dbBookId: ch.book_id,
+            dbChapterId: ch.id,
+            bookNumber: ch.book_number,
+            title: ch.book_title,
+            author: ch.author,
+            series: 'Magic Tree House',
+            level: 'Beginner (A2)',
+            levelKey: 'beginner',
+            chapter: ch.title,
+            currentChapterNumber: ch.chapter_number,
+            coverGradient: 'from-amber-600 via-amber-700 to-indigo-950',
+            tagline: `Magic Tree House #${ch.book_number} — ${ch.book_title}`,
+            passage: data.paragraphs.map((p: any) => p.content).join('\n\n'),
+            paragraphs: data.paragraphs,
+            starterPrompt: `오늘 함께 읽을 책은 Magic Tree House #${ch.book_number} "${ch.book_title}"의 "${ch.title}"이야!`,
+            keyExpressionsPreview: ['로컬 SQLite 원서', `${data.paragraphs.length}개 문단`],
+          };
+          setCurrentBook(bookPreset);
+          initBookSession(bookPreset);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to jump to passage:', e);
     }
   };
 
@@ -466,6 +516,7 @@ export default function App() {
         savedExpressions={savedExpressions}
         onRemoveExpression={handleRemoveExpression}
         onClearAll={handleClearExpressions}
+        onJumpToPassage={handleJumpToPassage}
       />
 
       <SettingsModal
