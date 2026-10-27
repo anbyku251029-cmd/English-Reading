@@ -12,8 +12,10 @@ import { BookSelectorModal } from './components/BookSelectorModal';
 import { NotebookDrawer } from './components/NotebookDrawer';
 import { SettingsModal } from './components/SettingsModal';
 import { ExportNotesModal } from './components/ExportNotesModal';
+import { HomeDashboardModal } from './components/HomeDashboardModal';
+import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { PRESET_BOOKS, BookPreset } from './data/presetBooks';
-import { Message, StudyPack, KeyExpression, LearnerLevel } from './types';
+import { Message, StudyPack, KeyExpression, LearnerLevel, ReadingProgress } from './types';
 import {
   loadSavedExpressions,
   addOrUpdateExpression,
@@ -41,6 +43,19 @@ export default function App() {
   const [isNotebookOpen, setIsNotebookOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
+  const [isDashboardOpen, setIsDashboardOpen] = useState<boolean>(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
+  const [notebookInitialTab, setNotebookInitialTab] = useState<'list' | 'review' | 'stats'>('list');
+  const [lastReadingProgress, setLastReadingProgress] = useState<ReadingProgress | null>(null);
+
+  const updateLastProgressFromStorage = useCallback(() => {
+    try {
+      const raw = localStorage.getItem('booky_reading_progress');
+      if (raw) setLastReadingProgress(JSON.parse(raw));
+    } catch (e) {
+      console.warn('Failed to parse reading progress', e);
+    }
+  }, []);
 
   // Saved expressions in Notebook (persist to localStorage via studyStorage)
   const [savedExpressions, setSavedExpressions] = useState<KeyExpression[]>(() => {
@@ -141,7 +156,13 @@ export default function App() {
     };
 
     restoreProgress();
-  }, [initBookSession]);
+    updateLastProgressFromStorage();
+  }, [initBookSession, updateLastProgressFromStorage]);
+
+  const handleRestoreSuccess = () => {
+    setSavedExpressions(loadSavedExpressions());
+    updateLastProgressFromStorage();
+  };
 
   // Handle changing the current book
   const handleSelectBook = (newBook: BookPreset) => {
@@ -405,7 +426,12 @@ export default function App() {
         currentStep={currentStep}
         onSelectStep={handleSelectStep}
         onOpenBookModal={() => setIsBookModalOpen(true)}
-        onOpenNotebook={() => setIsNotebookOpen(true)}
+        onOpenNotebook={() => {
+          setNotebookInitialTab('list');
+          setIsNotebookOpen(true);
+        }}
+        onOpenDashboard={() => setIsDashboardOpen(true)}
+        onOpenBackupModal={() => setIsBackupModalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onExportNotes={() => setIsExportOpen(true)}
         savedExpressionsCount={savedExpressions.length}
@@ -517,6 +543,30 @@ export default function App() {
         onRemoveExpression={handleRemoveExpression}
         onClearAll={handleClearExpressions}
         onJumpToPassage={handleJumpToPassage}
+        initialTab={notebookInitialTab}
+      />
+
+      <HomeDashboardModal
+        isOpen={isDashboardOpen}
+        onClose={() => setIsDashboardOpen(false)}
+        lastProgress={lastReadingProgress}
+        onJumpToPassage={(bookId, chapterId) => {
+          handleJumpToPassage(bookId, chapterId);
+        }}
+        onOpenLibrary={() => setIsBookModalOpen(true)}
+        onOpenNotebook={(tab) => {
+          if (tab === 'review') setNotebookInitialTab('review');
+          else if (tab === 'stats') setNotebookInitialTab('stats');
+          else setNotebookInitialTab('list');
+          setIsNotebookOpen(true);
+        }}
+        onOpenBackupModal={() => setIsBackupModalOpen(true)}
+      />
+
+      <BackupRestoreModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        onRestoreSuccess={handleRestoreSuccess}
       />
 
       <SettingsModal

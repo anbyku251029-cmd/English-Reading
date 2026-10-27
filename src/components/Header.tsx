@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Sparkles, Bookmark, Settings, Download, Bot } from 'lucide-react';
+import { BookOpen, Sparkles, Bookmark, Settings, Download, Bot, Home, HardDrive } from 'lucide-react';
 import { BookPreset } from '../data/presetBooks';
 
 interface HeaderProps {
@@ -13,6 +13,8 @@ interface HeaderProps {
   savedExpressionsCount: number;
   isChatOpen?: boolean;
   onToggleChat?: () => void;
+  onOpenDashboard?: () => void;
+  onOpenBackupModal?: () => void;
 }
 
 const LEARNING_STEPS = [
@@ -33,6 +35,8 @@ export const Header: React.FC<HeaderProps> = ({
   savedExpressionsCount,
   isChatOpen = true,
   onToggleChat,
+  onOpenDashboard,
+  onOpenBackupModal,
 }) => {
   return (
     <header className="bg-white border-b border-amber-100/80 sticky top-0 z-30 shadow-xs">
@@ -102,7 +106,20 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Right Action buttons */}
-          <div className="flex items-center space-x-1.5 sm:space-x-2">
+          <div className="flex items-center space-x-1 sm:space-x-1.5">
+            {/* Learning Home Dashboard */}
+            {onOpenDashboard && (
+              <button
+                type="button"
+                onClick={onOpenDashboard}
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-xs font-bold text-amber-900 bg-amber-100/80 hover:bg-amber-200/80 border border-amber-300/80 transition cursor-pointer"
+                title="나의 학습 대시보드 (목표 & 진도)"
+              >
+                <Home className="w-4 h-4 text-amber-700" />
+                <span className="hidden md:inline">학습 홈</span>
+              </button>
+            )}
+
             {/* Toggle AI Coach Chat */}
             <button
               type="button"
@@ -124,7 +141,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenNotebook}
               className="relative p-2 rounded-lg text-slate-600 hover:text-amber-700 hover:bg-amber-50 transition cursor-pointer"
-              title="표현 노트 열기"
+              title="표현 노트 & 복습 모드 열기"
             >
               <Bookmark className="w-5 h-5" />
               {savedExpressionsCount > 0 && (
@@ -134,12 +151,24 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
+            {/* Backup & Restore */}
+            {onOpenBackupModal && (
+              <button
+                type="button"
+                onClick={onOpenBackupModal}
+                className="p-2 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 transition cursor-pointer"
+                title="로컬 데이터 백업 & 복원"
+              >
+                <HardDrive className="w-5 h-5" />
+              </button>
+            )}
+
             {/* Export Notes */}
             <button
               type="button"
               onClick={onExportNotes}
               className="p-2 rounded-lg text-slate-600 hover:text-amber-700 hover:bg-amber-50 transition cursor-pointer"
-              title="오늘 학습 내용 내보내기"
+              title="학습 기록 마크다운 내보내기"
             >
               <Download className="w-5 h-5" />
             </button>

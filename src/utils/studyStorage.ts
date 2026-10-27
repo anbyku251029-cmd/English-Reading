@@ -1,10 +1,14 @@
-import { KeyExpression, DailyStudyLog, LearningStatsSummary } from '../types';
+import { KeyExpression, DailyStudyLog, LearningStatsSummary, DailyGoals } from '../types';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   EXPRESSIONS: 'booky_saved_expressions',
   DAILY_LOGS: 'booky_daily_logs',
   CHECKLIST: 'booky_reading_checklist',
   PROGRESS: 'booky_reading_progress',
+  VOCAB_NOTES: 'booky_vocab_notes',
+  GOALS: 'booky_daily_goals',
+  FONT_SIZE: 'booky_font_size',
+  PRE_RESTORE_BACKUP: 'booky_pre_restore_backup',
 };
 
 // ============================================================================
@@ -227,8 +231,75 @@ export function calculateLearningStats(): LearningStatsSummary {
 }
 
 // ============================================================================
-// 4. Markdown Export & Backup (Step 07-F)
+// 5. Daily Goals Management (Step 08-B)
 // ============================================================================
+
+export const DEFAULT_DAILY_GOALS: DailyGoals = {
+  targetChapters: 1,
+  targetExpressions: 3,
+  updatedAt: new Date().toISOString().slice(0, 10),
+};
+
+export function loadDailyGoals(): DailyGoals {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.GOALS);
+    if (!raw) return DEFAULT_DAILY_GOALS;
+    const parsed = JSON.parse(raw);
+    return {
+      targetChapters: typeof parsed.targetChapters === 'number' && parsed.targetChapters > 0 ? parsed.targetChapters : 1,
+      targetExpressions: typeof parsed.targetExpressions === 'number' && parsed.targetExpressions > 0 ? parsed.targetExpressions : 3,
+      updatedAt: parsed.updatedAt || new Date().toISOString().slice(0, 10),
+    };
+  } catch (e) {
+    console.warn('Failed to parse daily goals from localStorage', e);
+    return DEFAULT_DAILY_GOALS;
+  }
+}
+
+export function saveDailyGoals(goals: Partial<DailyGoals>): DailyGoals {
+  try {
+    const current = loadDailyGoals();
+    const updated: DailyGoals = {
+      targetChapters: goals.targetChapters ?? current.targetChapters,
+      targetExpressions: goals.targetExpressions ?? current.targetExpressions,
+      updatedAt: new Date().toISOString().slice(0, 10),
+    };
+    localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.warn('Failed to save daily goals', e);
+    return DEFAULT_DAILY_GOALS;
+  }
+}
+
+export function calculateGoalProgress(goals: DailyGoals) {
+  const today = new Date().toISOString().slice(0, 10);
+  const dailyLogs = loadDailyLogs();
+  const expressions = loadSavedExpressions();
+
+  // 1. Chapters read or visited today
+  const todayLogs = dailyLogs.filter((l) => l.date === today);
+  const actualChaptersToday = todayLogs.length;
+  const chapterProgressPercent = Math.min(100, Math.round((actualChaptersToday / goals.targetChapters) * 100));
+
+  // 2. Expressions reviewed today
+  const actualReviewedToday = expressions.filter(
+    (e) => e.lastReviewedAt === today && (e.reviewCount || 0) > 0
+  ).length;
+  const expressionProgressPercent = Math.min(100, Math.round((actualReviewedToday / goals.targetExpressions) * 100));
+
+  return {
+    actualChaptersToday,
+    targetChapters: goals.targetChapters,
+    chapterProgressPercent,
+    isChapterGoalAchieved: actualChaptersToday >= goals.targetChapters,
+
+    actualReviewedToday,
+    targetExpressions: goals.targetExpressions,
+    expressionProgressPercent,
+    isExpressionGoalAchieved: actualReviewedToday >= goals.targetExpressions,
+  };
+}
 
 export function exportExpressionsToMarkdown(expressions: KeyExpression[]): string {
   const dateStr = new Date().toLocaleDateString('ko-KR');

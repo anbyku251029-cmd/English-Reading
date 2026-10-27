@@ -86,6 +86,8 @@ export interface ReadingProgress {
   chapterId: number;
   lastParagraphIndex: number;
   lastReadAt: string;
+  bookTitle?: string;
+  chapterTitle?: string;
 }
 
 // Daily Study Log & Stats Types (Step 07)
@@ -111,4 +113,43 @@ export interface LearningStatsSummary {
   reviewedExpressionsCount: number;
   completedBooksCount: number;
   dailyLogs: DailyStudyLog[];
+}
+
+// Daily Goals & Backup/Restore Types (Step 08)
+export interface DailyGoals {
+  targetChapters: number;
+  targetExpressions: number;
+  updatedAt: string;
+}
+
+export interface BackupData {
+  app: 'Booky';
+  version: '1.0.0';
+  exportedAt: string;
+  data: {
+    expressions: KeyExpression[];
+    dailyLogs: DailyStudyLog[];
+    readingProgress?: ReadingProgress;
+    checklist?: Record<string, boolean>;
+    vocabNotes?: {
+      word: string;
+      note: string;
+      bookTitle?: string;
+      chapterTitle?: string;
+      savedAt?: string;
+    }[];
+    dailyGoals?: DailyGoals;
+    fontSize?: number;
+  };
+}
+
+export interface BackupValidationResult {
+  isValid: boolean;
+  error?: string;
+  itemCounts?: {
+    expressions: number;
+    dailyLogs: number;
+    vocabNotes: number;
+  };
+  backupData?: BackupData;
 }

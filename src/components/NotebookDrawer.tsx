@@ -38,6 +38,7 @@ interface NotebookDrawerProps {
   onRemoveExpression: (expression: string) => void;
   onClearAll: () => void;
   onJumpToPassage?: (bookId?: number | string, chapterId?: number | string) => void;
+  initialTab?: 'list' | 'review' | 'stats';
 }
 
 export const NotebookDrawer: React.FC<NotebookDrawerProps> = ({
@@ -47,8 +48,15 @@ export const NotebookDrawer: React.FC<NotebookDrawerProps> = ({
   onRemoveExpression,
   onClearAll,
   onJumpToPassage,
+  initialTab = 'list',
 }) => {
-  const [activeTab, setActiveTab] = useState<'list' | 'review' | 'stats'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'review' | 'stats'>(initialTab);
+
+  React.useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
   const [copied, setCopied] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBookFilter, setSelectedBookFilter] = useState('ALL');
