@@ -23,8 +23,9 @@ param (
     [string]$CommitMessage = "chore: safe auto-sync from Antigravity"
 )
 
-# PowerShell에서 외부 네이티브 명령(npm, git)의 stderr 출력이 NativeCommandError로 스크립트를 중단시키지 않도록 설정
-$ErrorActionPreference = "Continue"
+# UTF-8 입출력 인코딩 보장
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $ExpectedRemote = "https://github.com/anbyku251029-cmd/English-Reading"
 
 Write-Host "===========================================================================" -ForegroundColor Cyan
@@ -107,9 +108,18 @@ Write-Host "[5/6] 변경 사항 스테이징 및 커밋 생성..." -ForegroundCo
 git add src/
 git add scripts/
 git add docs/
-git add 완료보고서/
 git add reports/
-git add package.json package-lock.json tsconfig.json tsconfig.node.json tsconfig.app.json vite.config.ts tailwind.config.js index.html .gitignore AGENTS.md server.ts 2>$null
+git add .gitignore
+git add AGENTS.md
+git add .env.example
+git add package.json
+git add package-lock.json
+git add tsconfig.json
+git add vite.config.ts
+git add tailwind.config.js
+git add index.html
+git add server.ts
+git add 완료보고서/ 2>$null
 
 # 이전 커밋에 잘못 포함되었을 수 있는 저작권 pdf 제거 확인
 git rm --cached public/assets/aistudio/01_Dinosaurs_Before_Dark_-_Mary_Pope_Osborne_47a1ea99.pdf 2>$null

@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build outputs
+dist/
+build/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & Secrets (NEVER COMMIT)
+.env*
+!.env.example
+
+# Local Backups & Scratch & Python cache
+backup/
+scratch/
+tmp/
+*.tmp
+__pycache__/
+*.pyc
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# ==============================================================================
+# Copyright Protected Original Books & Media (STRICT EXCLUSION)
+# ==============================================================================
+Book/
+*.mobi
+*.epub
+*.pdf
+public/assets/aistudio/*.pdf
+
+# ==============================================================================
+# Local Databases with Extracted Book Contents (STRICT EXCLUSION)
+# ==============================================================================
+data/local_books/
+*.sqlite3
+*.sqlite3-journal
+*.db

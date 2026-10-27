@@ -1,10 +1,15 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 
+// 1. Safe Environment Variable Loading (.env first, then .env.local with priority)
 dotenv.config();
+if (fs.existsSync('.env.local')) {
+  dotenv.config({ path: '.env.local', override: true });
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,17 +17,99 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '10mb' }));
+// Security: limit request body size to 2MB to prevent memory exhaustion
+app.use(express.json({ limit: '2mb' }));
 
-// Shared server-side Gemini client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Model configuration
+const GEMINI_TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts';
+
+// Client factory that validates API key presence without leaking it
+function getGeminiClient(): GoogleGenAI | null {
+  const rawKey = process.env.GEMINI_API_KEY;
+  if (!rawKey || typeof rawKey !== 'string') {
+    return null;
+  }
+  const trimmed = rawKey.trim();
+  if (!trimmed || trimmed === 'MY_GEMINI_API_KEY' || trimmed === 'YOUR_GEMINI_API_KEY_HERE') {
+    return null;
+  }
+  return new GoogleGenAI({
+    apiKey: trimmed,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'booky-english-coach',
+      },
     },
-  },
-});
+  });
+}
+
+// Structured error classifier for Gemini API calls
+function classifyGeminiError(error: any): { status: number; code: string; message: string } {
+  const errMsg = String(error?.message || error || '');
+  const status = Number(error?.status || 0);
+
+  // 1. Missing API Key
+  if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'MY_GEMINI_API_KEY' || !process.env.GEMINI_API_KEY.trim()) {
+    return {
+      status: 401,
+      code: 'API_KEY_MISSING',
+      message: 'Gemini API 키가 설정되지 않았습니다. 프로젝트의 .env.local 파일에 GEMINI_API_KEY를 설정해 주세요.',
+    };
+  }
+
+  // 2. Invalid API Key
+  if (status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid'))) {
+    return {
+      status: 401,
+      code: 'API_KEY_INVALID',
+      message: '등록된 Gemini API 키가 유효하지 않습니다. Google AI Studio에서 올바른 키를 확인해 주세요.',
+    };
+  }
+
+  // 3. Permission Denied / Caller Identity
+  if (status === 403 || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('unregistered callers')) {
+    return {
+      status: 403,
+      code: 'PERMISSION_DENIED',
+      message: '해당 API 키로 Gemini 모델을 호출할 권한이 없습니다. API 키 상태와 권한을 확인해 주세요.',
+    };
+  }
+
+  // 4. Rate limit / Quota exceeded
+  if (status === 429 || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota') || errMsg.includes('rate limit')) {
+    return {
+      status: 429,
+      code: 'QUOTA_EXCEEDED',
+      message: 'Gemini API 호출 한도(Quota)가 초과되었습니다. 잠시 후 다시 시도해 주세요.',
+    };
+  }
+
+  // 5. Model Not Found / Unsupported Model
+  if (status === 404 || errMsg.includes('not found') || errMsg.includes('is not supported')) {
+    return {
+      status: 404,
+      code: 'MODEL_NOT_FOUND',
+      message: `요청한 Gemini AI 모델(${GEMINI_TEXT_MODEL})을 찾을 수 없습니다. 지원되는 모델명(예: gemini-2.5-flash)을 확인해 주세요.`,
+    };
+  }
+
+  // 6. Network / Connectivity Error
+  if (errMsg.includes('ENOTFOUND') || errMsg.includes('ECONNREFUSED') || errMsg.includes('ETIMEDOUT') || errMsg.includes('fetch failed')) {
+    return {
+      status: 503,
+      code: 'NETWORK_ERROR',
+      message: 'Google Gemini 서버에 연결할 수 없습니다. 네트워크 연결 상태를 확인해 주세요.',
+    };
+  }
+
+  // Generic internal server error (never leak raw error stack or secrets)
+  return {
+    status: 500,
+    code: 'AI_PROVIDER_ERROR',
+    message: 'AI 응답 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+  };
+}
 
 const BOOKY_SYSTEM_INSTRUCTION = `
 # Role & Identity
@@ -62,42 +149,62 @@ When the user provides a text passage or mentions a chapter from an English book
 - **Step Tracking:** At the very beginning or end of your message, clearly indicate which step is active using format: "[STEP: 1]", "[STEP: 2]", "[STEP: 3]", or "[STEP: 4]".
 `;
 
-// API: Multi-turn Chat with Booky
+// ============================================================================
+// API 1: Multi-turn Chat with Booky (/api/chat)
+// ============================================================================
 app.post('/api/chat', async (req, res) => {
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(401).json({
+      ok: false,
+      error: {
+        code: 'API_KEY_MISSING',
+        message: 'Gemini API 키가 설정되지 않았습니다. 프로젝트의 .env.local 파일에 GEMINI_API_KEY를 설정해 주세요.',
+      },
+    });
+  }
+
   try {
     const { messages, bookContext, learnerLevel } = req.body;
 
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: 'Messages array is required' });
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'INVALID_REQUEST', message: '대화 메시지(messages) 배열이 필요합니다.' },
+      });
     }
 
+    // Safety: limit conversation context to the latest 20 turns
+    const boundedMessages = messages.slice(-20);
+
     const levelGuidance = learnerLevel
-      ? `Learner Level: ${learnerLevel.toUpperCase()} (Adjust English vocabulary complexity and speed accordingly).`
+      ? `Learner Level: ${String(learnerLevel).toUpperCase()} (Adjust English vocabulary complexity and speed accordingly).`
       : '';
 
-    const contextPrefix = bookContext?.passage
+    const safePassage = bookContext?.passage ? String(bookContext.passage).slice(0, 10000) : '';
+
+    const contextPrefix = safePassage
       ? `[Current Book Context]
-Book: ${bookContext.title || 'Selected English Book'}
-Chapter: ${bookContext.chapter || 'Chapter'}
+Book: ${String(bookContext?.title || 'Selected English Book').slice(0, 200)}
+Chapter: ${String(bookContext?.chapter || 'Chapter').slice(0, 200)}
 Passage:
 """
-${bookContext.passage}
+${safePassage}
 """
 ${levelGuidance}
 `
       : `${levelGuidance}`;
 
     // Format Gemini contents
-    const contents = messages.map((m: { role: string; content: string }) => ({
+    const contents = boundedMessages.map((m: { role: string; content: string }) => ({
       role: m.role === 'user' ? 'user' : 'model',
-      parts: [{ text: m.content }],
+      parts: [{ text: String(m.content || '').slice(0, 5000) }],
     }));
 
-    // Inject context prefix into first user message or system instruction
     const fullSystemInstruction = `${BOOKY_SYSTEM_INSTRUCTION}\n\n${contextPrefix}`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: GEMINI_TEXT_MODEL,
       contents,
       config: {
         systemInstruction: fullSystemInstruction,
@@ -106,7 +213,13 @@ ${levelGuidance}
     });
 
     const reply = response.text || '';
-    
+    if (!reply.trim()) {
+      return res.status(502).json({
+        ok: false,
+        error: { code: 'EMPTY_RESPONSE', message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' },
+      });
+    }
+
     // Parse step from reply if present
     let currentStep = 1;
     const stepMatch = reply.match(/\[STEP:\s*([1-4])\]/i);
@@ -114,66 +227,63 @@ ${levelGuidance}
       currentStep = parseInt(stepMatch[1], 10);
     }
 
-    res.json({
+    return res.json({
+      ok: true,
       reply,
       currentStep,
     });
   } catch (error: any) {
-    console.error('Error in /api/chat:', error?.message || error);
-    
-    // Resilient educational fallback for Booky if API quota is temporarily reached
-    const { messages, bookContext } = req.body;
-    const lastMsg = messages?.[messages.length - 1]?.content || '';
-    const isStep2 = lastMsg.includes('Step 2') || lastMsg.includes('섀도잉') || lastMsg.includes('따라 읽');
-    const isStep3 = lastMsg.includes('Step 3') || lastMsg.includes('토론') || lastMsg.includes('롤플레잉') || lastMsg.includes('생각');
-    const isStep4 = lastMsg.includes('Step 4') || lastMsg.includes('문장') || lastMsg.includes('영작');
-
-    if (isStep2) {
-      return res.json({
-        reply: `좋아요! 🎙️ **Step 2: Read Aloud & Shadowing Practice** 단계입니다!\n\n오늘 집중할 낭독 문장은 바로 이 문장이에요:\n👉 *"This is what I get / for helping my seven-year-old sister," / he thought.*\n\n호흡을 한 번에 쏟아내지 마시고, 슬래시(/) 부분에서 반 박자 살짝 쉬어가며 잭(Jack)의 툴툴대는 마음을 담아 소리 내어 읽어보세요!\n\n[STEP: 2] 왼쪽 '섀도잉 스튜디오'에서 마이크 버튼을 눌러 직접 녹음해보거나, 읽어본 후 소감을 말씀해 주세요! 👏`,
-        currentStep: 2,
-      });
-    }
-
-    if (isStep3) {
-      return res.json({
-        reply: `훌륭해요! 🌟 이제 **Step 3: Book Discussion & Role-play (스토리 기반 회화 확장)**로 넘어가 볼까요?\n\n단순한 줄거리 확인이 아니라, 여러분의 생각과 감정을 영어로 꺼내보는 시간입니다.\n\n💭 **Booky's Question:**\n"If you were Jack and your little sister ran deep into the dark woods alone, would you run after her immediately, or run home to tell your parents? Why?"\n\n[STEP: 3] 여러분이라면 이 상황에서 어떻게 했을지 영어로 한두 문장 편하게 들려주세요!`,
-        currentStep: 3,
-      });
-    }
-
-    if (isStep4) {
-      return res.json({
-        reply: `대단해요! 벌써 마지막 **Step 4: Personal Output (나만의 문장 만들기)**입니다! ✍️✨\n\n오늘 배운 핵심 표현 중 하나인 **"This is what I get for ~" (~한 대가가 겨우 이거라니 / ~하더니 꼴좋다)**를 활용해 내 일상과 관련된 문장을 딱 1개만 만들어보세요!\n\n💡 *Hint / Example:*\n- "This is what I get for staying up late watching movies." (밤늦게 영화 본 대가로 피곤하네!)\n- "This is what I get for not listening to my mom."\n\n[STEP: 4] 여러분의 일상 속 이야기를 담아 영작해 주시면, 제가 가장 자연스러운 원어민 표현으로 다듬어 드릴게요!`,
-        currentStep: 4,
-      });
-    }
-
-    // Default Step 1 Welcome & Key Expressions
-    res.json({
-      reply: `반가워요! 너의 영어 원서 & 회화 AI 코치 **Booky**야! 📚✨\n오늘 함께 읽을 책은 **${bookContext?.title || 'Magic Tree House #1'}**이야.\n\n한국어로 한 단어씩 직역하려 하지 말고, 숲속의 늦은 오후 황금빛 햇살과 잭의 표정을 머릿속에 영화처럼 그려보자!\n\n[STEP: 1] **오늘의 일상 회화 핵심 표현 3가지:**\n1. **"This is what I get for..."** (~한 대가가 겨우 이거라니)\n   - 원서 문맥: 동생 도와주려다 귀찮은 일에 휘말린 잭의 독백\n   - 일상 회화: *"This is what I get for buying cheap shoes!"* (싼 신발 샀더니 발만 아프네)\n2. **"Watch out!"** (조심해! / 뒤를 봐!)\n   - 일상 회화: *"Watch out! The floor is wet."*\n3. **"Take a deep breath"** (심호흡을 하다, 마음을 가다듬다)\n   - 일상 회화: *"Take a deep breath before your presentation."*\n\n왼쪽 본문 읽기에서 문장을 클릭해 원어민 발음을 들어보세요. 준비되면 **"Step 2로 갈래!"**라고 말씀해 주세요! 🎙️`,
-      currentStep: 1,
+    // Log error code and type safely without exposing credentials
+    console.error('[API Error /api/chat]:', error?.status || '', error?.message || error);
+    const classified = classifyGeminiError(error);
+    return res.status(classified.status).json({
+      ok: false,
+      error: {
+        code: classified.code,
+        message: classified.message,
+      },
     });
   }
 });
 
-// API: Passage Analysis & Step 1 Breakdown
+// ============================================================================
+// API 2: Passage Analysis & Step 1 Breakdown (/api/analyze-passage)
+// ============================================================================
 app.post('/api/analyze-passage', async (req, res) => {
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(401).json({
+      ok: false,
+      error: {
+        code: 'API_KEY_MISSING',
+        message: 'Gemini API 키가 설정되지 않았습니다. 프로젝트의 .env.local 파일에 GEMINI_API_KEY를 설정해 주세요.',
+      },
+    });
+  }
+
   try {
     const { title, chapter, passage, learnerLevel } = req.body;
 
-    if (!passage) {
-      return res.status(400).json({ error: 'Passage is required' });
+    if (!passage || typeof passage !== 'string' || !passage.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'INVALID_REQUEST', message: '원서 본문(passage) 텍스트가 필요합니다.' },
+      });
     }
 
+    const safeTitle = String(title || 'English Book').slice(0, 200);
+    const safeChapter = String(chapter || 'Chapter').slice(0, 200);
+    const safePassage = String(passage).slice(0, 10000);
+    const safeLevel = String(learnerLevel || 'intermediate').slice(0, 50);
+
     const prompt = `Analyze this English passage as "Booky", the English Reading & Conversation Coach:
-Book Title: ${title || 'English Book'}
-Chapter: ${chapter || 'Chapter'}
+Book Title: ${safeTitle}
+Chapter: ${safeChapter}
 Passage:
 """
-${passage}
+${safePassage}
 """
-Learner Level: ${learnerLevel || 'intermediate'}
+Learner Level: ${safeLevel}
 
 Extract structured learning elements according to Booky's 4-step pedagogical system:
 1. "sceneSummary": A warm 2-sentence summary in Korean focusing on visual scene imagery (no word-for-word translation).
@@ -194,7 +304,7 @@ Extract structured learning elements according to Booky's 4-step pedagogical sys
 Return ONLY valid JSON matching this schema.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: GEMINI_TEXT_MODEL,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: {
         responseMimeType: 'application/json',
@@ -202,70 +312,74 @@ Return ONLY valid JSON matching this schema.`;
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
-    res.json(parsed);
+    const text = response.text?.trim() || '';
+    if (!text) {
+      return res.status(502).json({
+        ok: false,
+        error: { code: 'EMPTY_RESPONSE', message: 'AI가 원서 분석 데이터를 반환하지 못했습니다.' },
+      });
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return res.status(502).json({
+        ok: false,
+        error: { code: 'PARSE_ERROR', message: 'AI가 반환한 JSON 구조를 해석하지 못했습니다.' },
+      });
+    }
+
+    return res.json({
+      ok: true,
+      ...parsed,
+    });
   } catch (error: any) {
-    console.error('Error in /api/analyze-passage:', error?.message || error);
-    
-    // Curated rich pedagogical fallback
-    const { title, chapter } = req.body;
-    res.json({
-      sceneSummary: `해 질 무렵 펜실베이니아의 평화로운 프로그 크릭 숲속, 잭과 엉뚱 발랄한 여동생 애니가 마주한 신비로운 거대 나무 위의 오두막. 모험의 두근거림과 신비로운 호기심이 감도는 황금빛 오후의 풍경입니다.`,
-      keyExpressions: [
-        {
-          expression: 'This is what I get for...',
-          inContext: '동생 애니를 도와주려다 귀찮은 일에 휘말려 툴툴대는 잭의 독백',
-          everydayMeaning: '~한 대가가 겨우 이거라니, ~하더니 꼴좋다 (자조적인 농담)',
-          dailyExample: "This is what I get for waiting until the last minute to study!",
-          dailyExampleMeaning: "벼락치기 공부했더니 시험 점수가 이 꼴이네!"
-        },
-        {
-          expression: 'Watch out!',
-          inContext: '괴물이 나타났다며 숲으로 뛰어가며 잭에게 외치는 애니의 대사',
-          everydayMeaning: '조심해! / 앞/뒤를 살펴봐!',
-          dailyExample: "Watch out! The sidewalk is icy today.",
-          dailyExampleMeaning: "조심해! 오늘 인도 빙판길이야."
-        },
-        {
-          expression: 'Take a deep breath',
-          inContext: '동생을 찾아 어두워지는 숲속으로 들어가기 전 마음을 다잡는 잭',
-          everydayMeaning: '심호흡을 하다, 마음을 가다듬다 / 진정하다',
-          dailyExample: "Before going on stage, take a deep breath and smile.",
-          dailyExampleMeaning: "무대에 오르기 전에 심호흡 한번 하고 미소 지어봐."
-        }
-      ],
-      shadowingSentences: [
-        {
-          sentence: 'This is what I get for helping my seven-year-old sister.',
-          rhythmChunks: 'This is what I get / for helping / my seven-year-old sister.',
-          rhythmTip: 'get과 sister에 악센트를 두고, helping 앞에서 부드럽게 호흡을 연결해보세요.'
-        },
-        {
-          sentence: 'And it looks like nobody has been up there for a very long time.',
-          rhythmChunks: 'And it looks like / nobody has been up there / for a very long time.',
-          rhythmTip: 'nobody와 long time을 강조하고, has been up there를 한 덩어리로 매끄럽게 발음하세요.'
-        }
-      ],
-      discussionPrompt: 'How would you feel if your younger sibling suddenly ran alone into a dark, quiet woods?',
-      roleplayScenario: 'You are Jack trying to convince Annie to come home before dinner.',
-      personalOutputPrompt: 'Use "This is what I get for..." to describe a funny minor mistake you made recently.'
+    console.error('[API Error /api/analyze-passage]:', error?.status || '', error?.message || error);
+    const classified = classifyGeminiError(error);
+    return res.status(classified.status).json({
+      ok: false,
+      error: {
+        code: classified.code,
+        message: classified.message,
+      },
     });
   }
 });
 
-// API: Shadowing & Read-Aloud Feedback
+// ============================================================================
+// API 3: Shadowing & Read-Aloud Feedback (/api/shadowing-feedback)
+// ============================================================================
 app.post('/api/shadowing-feedback', async (req, res) => {
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(401).json({
+      ok: false,
+      error: {
+        code: 'API_KEY_MISSING',
+        message: 'Gemini API 키가 설정되지 않았습니다. 프로젝트의 .env.local 파일에 GEMINI_API_KEY를 설정해 주세요.',
+      },
+    });
+  }
+
   try {
     const { targetSentence, userSpokenText, bookTitle } = req.body;
 
-    if (!targetSentence) {
-      return res.status(400).json({ error: 'Target sentence is required' });
+    if (!targetSentence || typeof targetSentence !== 'string' || !targetSentence.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'INVALID_REQUEST', message: '낭독 목표 문장(targetSentence)이 필요합니다.' },
+      });
     }
 
+    const safeSentence = String(targetSentence).slice(0, 500);
+    const safeSpoken = String(userSpokenText || 'Spoken aloud by learner').slice(0, 500);
+    const safeBook = String(bookTitle || 'Book excerpt').slice(0, 200);
+
     const prompt = `You are "Booky", evaluating a learner's English read-aloud/shadowing practice.
-Target sentence: "${targetSentence}"
-Learner spoken/input text: "${userSpokenText || ''}"
-Book Context: "${bookTitle || 'Book excerpt'}"
+Target sentence: "${safeSentence}"
+Learner spoken/input text: "${safeSpoken}"
+Book Context: "${safeBook}"
 
 Provide encouraging, constructive feedback in Korean with:
 1. "score": An encouraging score from 75 to 100 based on effort and clarity.
@@ -277,7 +391,7 @@ Provide encouraging, constructive feedback in Korean with:
 Return ONLY valid JSON matching this schema.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: GEMINI_TEXT_MODEL,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: {
         responseMimeType: 'application/json',
@@ -285,41 +399,77 @@ Return ONLY valid JSON matching this schema.`;
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
-    res.json(parsed);
+    const text = response.text?.trim() || '';
+    if (!text) {
+      return res.status(502).json({
+        ok: false,
+        error: { code: 'EMPTY_RESPONSE', message: 'AI가 섀도잉 평가 결과를 반환하지 못했습니다.' },
+      });
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return res.status(502).json({
+        ok: false,
+        error: { code: 'PARSE_ERROR', message: 'AI가 반환한 섀도잉 피드백 JSON을 해석하지 못했습니다.' },
+      });
+    }
+
+    return res.json({
+      ok: true,
+      ...parsed,
+    });
   } catch (error: any) {
-    console.error('Error in /api/shadowing-feedback:', error?.message || error);
-    const { targetSentence } = req.body;
-    
-    // Encouraging fallback feedback
-    res.json({
-      score: 92,
-      praise: "목소리가 또렷하고 문장의 전체적인 호흡 템포가 아주 훌륭해요! 👏",
-      phrasingGuide: `${targetSentence?.replace(/\s+/g, ' / ') || 'This is / what I GET / for HELPING'}`,
-      intonationTip: "내용어(명사, 동사)에 강세를 주고 기능어(전치사, 대명사)는 가볍고 빠르게 넘겨보세요.",
-      coachingComment: "단어 하나하나 끊어 읽지 않고 문장 전체를 하나의 멜로디처럼 전달하는 능력이 돋보입니다. 최고예요! ✨"
+    console.error('[API Error /api/shadowing-feedback]:', error?.status || '', error?.message || error);
+    const classified = classifyGeminiError(error);
+    return res.status(classified.status).json({
+      ok: false,
+      error: {
+        code: classified.code,
+        message: classified.message,
+      },
     });
   }
 });
 
-// API: Text-to-Speech (Gemini TTS)
+// ============================================================================
+// API 4: Text-to-Speech via Gemini Audio (/api/tts)
+// ============================================================================
 app.post('/api/tts', async (req, res) => {
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(401).json({
+      ok: false,
+      error: {
+        code: 'API_KEY_MISSING',
+        message: 'Gemini API 키가 설정되지 않았습니다. 프로젝트의 .env.local 파일에 GEMINI_API_KEY를 설정해 주세요.',
+      },
+    });
+  }
+
   try {
     const { text, voice = 'Kore' } = req.body;
 
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'Text is required for TTS' });
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'INVALID_REQUEST', message: '음성으로 변환할 텍스트(text)가 필요합니다.' },
+      });
     }
 
-    // gemini-3.8-flash-lite-tts is the standard audio model
+    const safeText = String(text).slice(0, 500);
+    const safeVoice = String(voice).slice(0, 50);
+
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash-lite-tts',
+      model: GEMINI_TTS_MODEL,
       contents: [
         {
           role: 'user',
           parts: [
             {
-              text: text.slice(0, 500), // safe slice for single utterance
+              text: safeText,
               speechMetadata: {
                 style: 'Natural, expressive English reading with clear pacing and warm tone',
               },
@@ -331,28 +481,40 @@ app.post('/api/tts', async (req, res) => {
         responseModalities: ['AUDIO'],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voice }, // 'Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'
+            prebuiltVoiceConfig: { voiceName: safeVoice },
           },
         },
       },
     });
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
     if (!base64Audio) {
-      return res.status(502).json({ error: 'No audio generated' });
+      return res.status(502).json({
+        ok: false,
+        error: { code: 'NO_AUDIO_GENERATED', message: '오디오 데이터가 생성되지 않았습니다.' },
+      });
     }
 
-    res.json({
+    return res.json({
+      ok: true,
       audioUrl: `data:audio/wav;base64,${base64Audio}`,
     });
   } catch (error: any) {
-    console.error('Error in /api/tts:', error);
-    res.status(500).json({ error: error?.message || 'TTS generation failed' });
+    console.error('[API Error /api/tts]:', error?.status || '', error?.message || error);
+    const classified = classifyGeminiError(error);
+    return res.status(classified.status).json({
+      ok: false,
+      error: {
+        code: classified.code,
+        message: classified.message,
+      },
+    });
   }
 });
 
-// Full-stack Vite integration
+// ============================================================================
+// Full-stack Vite Integration
+// ============================================================================
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
 
@@ -376,7 +538,10 @@ async function startServer() {
   }
 
   app.listen(Number(port), '0.0.0.0', () => {
+    const hasKey = !!getGeminiClient();
     console.log(`[Booky Server] Running on http://0.0.0.0:${port} (${isProduction ? 'prod' : 'dev'})`);
+    console.log(`[Booky Server] Gemini API Key configured: ${hasKey ? 'YES' : 'NO (Set in .env.local)'}`);
+    console.log(`[Booky Server] Active Text Model: ${GEMINI_TEXT_MODEL}`);
   });
 }
 
