@@ -77,7 +77,6 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
 
   // 1단계 읽기 상태
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [playingSentenceIdx, setPlayingSentenceIdx] = useState<number | null>(null);
   const stopGuidedSpeechRef = useRef<boolean>(false);
   const [showKoreanTranslation, setShowKoreanTranslation] = useState(false);
   const [editingParagraphIdx, setEditingParagraphIdx] = useState<number | null>(null);
@@ -273,10 +272,8 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
 
   const handlePlayParagraph = async (idx: number) => {
     if (isPlayingAudio && currentParagraphIdx === idx) {
-      stopGuidedSpeechRef.current = true;
       audioManager.stop();
       setIsPlayingAudio(false);
-      setPlayingSentenceIdx(null);
       return;
     }
     const text = article.paragraphs[idx];
@@ -286,30 +283,11 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
       return;
     }
     handleSelectParagraph(idx);
-    stopGuidedSpeechRef.current = false;
     audioManager.stop();
     setIsPlayingAudio(true);
-    setPlayingSentenceIdx(0);
-
-    const pSentences = splitIntoSentences(text);
-    try {
-      for (let sIdx = 0; sIdx < pSentences.length; sIdx++) {
-        if (stopGuidedSpeechRef.current) break;
-        const sentence = pSentences[sIdx];
-        if (!sentence || !sentence.trim()) continue;
-
-        setPlayingSentenceIdx(sIdx);
-        await audioManager.speakSentence(sentence.trim(), 0.9);
-
-        if (stopGuidedSpeechRef.current) break;
-      }
-    } catch (e) {
-      console.warn('Guided paragraph speech error:', e);
-    } finally {
+    audioManager.speak(text, undefined, 0.9).finally(() => {
       setIsPlayingAudio(false);
-      setPlayingSentenceIdx(null);
-      stopGuidedSpeechRef.current = false;
-    }
+    });
   };
 
   const handleSaveParagraphNote = (idx: number) => {
@@ -733,24 +711,9 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
                           </div>
                         </div>
 
-                        <div className="text-sm text-slate-200 mt-2.5 leading-relaxed font-serif">
-                          {splitIntoSentences(p).map((s, sIdx) => {
-                            const isCurrentSentence = isPlayingAudio && currentParagraphIdx === idx && playingSentenceIdx === sIdx;
-                            return (
-                              <span
-                                key={sIdx}
-                                className={`inline transition-all duration-150 ${
-                                  isCurrentSentence
-                                    ? 'bg-amber-400 text-slate-950 font-bold px-1.5 py-0.5 rounded-md shadow-md ring-2 ring-amber-300'
-                                    : ''
-                                }`}
-                              >
-                                {isCurrentSentence && <span className="inline-block mr-1 text-xs animate-bounce select-none">🔊</span>}
-                                {s}{' '}
-                              </span>
-                            );
-                          })}
-                        </div>
+                        <p className="text-sm text-slate-200 mt-2.5 leading-relaxed font-serif">
+                          {p}
+                        </p>
 
                         {showKoreanTranslation && koreanP && (
                           <div className="mt-2.5 p-2.5 rounded bg-slate-950/80 border border-slate-800 text-xs text-slate-300 leading-relaxed">

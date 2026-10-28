@@ -50,19 +50,9 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
   const [fontSize, setFontSize] = useState<number>(16);
   const [isGuidedModalOpen, setIsGuidedModalOpen] = useState(false);
 
-  // 음성 재생 상태 (문단 및 문장별 실시간 추적)
+  // 음성 재생 상태
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [playingParagraphIndex, setPlayingParagraphIndex] = useState<number | null>(null);
-  const [playingSentenceIndex, setPlayingSentenceIndex] = useState<number | null>(null);
-  const stopRequestedRef = useRef<boolean>(false);
-
-  // 언마운트 시 오디오 정지
-  useEffect(() => {
-    return () => {
-      stopRequestedRef.current = true;
-      audioManager.stop();
-    };
-  }, []);
 
   // 문단 메모 상태
   const [editingParagraphIdx, setEditingParagraphIdx] = useState<number | null>(null);
@@ -175,14 +165,12 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
     showToast(`학습 상태가 [${newStatus === 'completed' ? '완독 완료' : newStatus === 'in_progress' ? '학습 중' : '학습 전'}]로 변경되었습니다.`);
   };
 
-  // 2. Web Speech API 음성 재생 (문장별 실시간 순차 낭독 & 하이라이트)
-  const handlePlayParagraph = async (index: number) => {
+  // 2. Web Speech API 음성 재생
+  const handlePlayParagraph = (index: number) => {
     if (isPlayingAudio && playingParagraphIndex === index) {
-      stopRequestedRef.current = true;
       audioManager.stop();
       setIsPlayingAudio(false);
       setPlayingParagraphIndex(null);
-      setPlayingSentenceIndex(null);
       return;
     }
 
@@ -198,33 +186,14 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
     updateNewsArticle(updated);
     setArticle(updated);
 
-    stopRequestedRef.current = false;
     audioManager.stop();
     setIsPlayingAudio(true);
     setPlayingParagraphIndex(index);
-    setPlayingSentenceIndex(0);
 
-    const paragraphSentences = splitIntoSentences(text);
-
-    try {
-      for (let sIdx = 0; sIdx < paragraphSentences.length; sIdx++) {
-        if (stopRequestedRef.current) break;
-        const sentence = paragraphSentences[sIdx];
-        if (!sentence || !sentence.trim()) continue;
-
-        setPlayingSentenceIndex(sIdx);
-        await audioManager.speakSentence(sentence.trim(), 0.9);
-
-        if (stopRequestedRef.current) break;
-      }
-    } catch (err) {
-      console.warn('Paragraph sentence speech error:', err);
-    } finally {
+    audioManager.speak(text, undefined, 0.9).finally(() => {
       setIsPlayingAudio(false);
       setPlayingParagraphIndex(null);
-      setPlayingSentenceIndex(null);
-      stopRequestedRef.current = false;
-    }
+    });
   };
 
   // 3. 문단 메모 저장
@@ -570,7 +539,7 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
                               : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
                           }`}
                         >
-                          <span>{isPlayingThis ? `⏹ 정지 (${(playingSentenceIndex ?? 0) + 1}/${sentences.length})` : '🔊 문단 낭독'}</span>
+                          <span>{isPlayingThis ? '⏹ 정지' : '🔊 문단 낭독'}</span>
                         </button>
                       </div>
 
@@ -599,26 +568,18 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
                       {sentences.map((sent, sIdx) => {
                         const sentId = `sent-${pIdx}-${sent.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '')}`;
                         const isAnalyzed = !!article.sentenceAnalyses?.[sentId];
-                        const isSpeakingSentence = isPlayingThis && playingSentenceIndex === sIdx;
 
                         return (
                           <span
                             key={sIdx}
                             onClick={() => handleSelectSentenceForAnalysis(sent, pIdx)}
-                            className={`inline cursor-pointer transition-all duration-150 ${
-                              isSpeakingSentence
-                                ? 'bg-amber-400 text-slate-950 font-bold px-1.5 py-0.5 rounded-md shadow-md ring-2 ring-amber-300 scale-[1.01]'
-                                : isAnalyzed
-                                ? 'bg-red-950/60 border-b border-red-500 text-white font-medium hover:bg-red-900/60 px-0.5 rounded'
-                                : 'hover:bg-slate-700/60 text-slate-200 px-0.5 rounded'
+                            className={`inline cursor-pointer rounded px-0.5 transition-colors ${
+                              isAnalyzed
+                                ? 'bg-red-950/60 border-b border-red-500 text-white font-medium hover:bg-red-900/60'
+                                : 'hover:bg-slate-700/60'
                             }`}
-                            title={isSpeakingSentence ? '현재 낭독 중인 문장입니다' : '클릭하여 C2 정밀 문장 분석 스튜디오로 이동'}
+                            title="클릭하여 C2 정밀 문장 분석 스튜디오로 이동"
                           >
-                            {isSpeakingSentence && (
-                              <span className="inline-block mr-1 text-slate-950 text-xs animate-bounce select-none">
-                                🔊
-                              </span>
-                            )}
                             {sent}{' '}
                           </span>
                         );
