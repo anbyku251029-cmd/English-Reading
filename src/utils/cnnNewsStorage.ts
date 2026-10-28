@@ -242,7 +242,7 @@ export function loadNewsArticles(): CnnNewsArticle[] {
     if (!raw) {
       list = [SEED_ARTICLE_LUNG_NODULES, ...STATIC_2022_01_ARTICLES];
       saveNewsArticles(list);
-      return list;
+      return list.map(ensureArticleStudyData);
     }
 
     const parsed = JSON.parse(raw);
@@ -306,7 +306,7 @@ export function loadNewsArticles(): CnnNewsArticle[] {
     return list;
   } catch (e) {
     console.warn('Failed to parse cnn news articles from localStorage, fallback to static articles', e);
-    return [SEED_ARTICLE_LUNG_NODULES, ...STATIC_2022_01_ARTICLES];
+    return [SEED_ARTICLE_LUNG_NODULES, ...STATIC_2022_01_ARTICLES].map(ensureArticleStudyData);
   }
 }
 
@@ -327,15 +327,168 @@ export function ensureSeedArticleLungNodules(): CnnNewsArticle {
   return SEED_ARTICLE_LUNG_NODULES;
 }
 
+// ============================================================================
+// 기사별 8단계 C2 학습 데이터 자동 보장 함수 (8-Step Mastery Guaranteed)
+// ============================================================================
+
+export function ensureArticleStudyData(article: CnnNewsArticle): CnnNewsArticle {
+  if (!article) return article;
+
+  const allSentences: string[] = [];
+  (article.paragraphs || []).forEach((p) => {
+    splitIntoSentences(p).forEach((s) => {
+      const trimmed = s.trim();
+      if (trimmed.length > 20) {
+        allSentences.push(trimmed);
+      }
+    });
+  });
+
+  const readingQuestions = (article.readingQuestions && article.readingQuestions.length > 0)
+    ? article.readingQuestions
+    : createDefaultReadingQuestions();
+
+  // 1. 객관식 독해 퀴즈 (없을 경우 2문제 자동 보장)
+  let comprehensionQuizzes = article.comprehensionQuizzes;
+  if (!comprehensionQuizzes || comprehensionQuizzes.length === 0) {
+    comprehensionQuizzes = [
+      {
+        id: `quiz-${article.id}-1`,
+        question: `${article.title} 기사의 주된 보도 핵심은 무엇인가요?`,
+        options: [
+          { key: 'a', text: '기사에서 보도된 사건의 전개와 주요 배경 사실' },
+          { key: 'b', text: '전혀 관련 없는 인물의 일상 생활 이야기' },
+          { key: 'c', text: '기사의 주요 수치와 반대되는 추측' },
+          { key: 'd', text: '일방적인 광고성 홍보 메시지' },
+        ],
+        correctAnswer: 'a',
+        explanation: '기사 본문은 주요 시사 사건의 원인, 전개 과정, 전문가 인터뷰 및 사회적 파장을 집중 보도하고 있습니다.',
+      },
+      {
+        id: `quiz-${article.id}-2`,
+        question: '본문의 논리적 전개 방식에 부합하는 서술은?',
+        options: [
+          { key: 'a', text: '구체적인 팩트와 당사자 인용을 통해 현 상황을 입체적으로 조명한다.' },
+          { key: 'b', text: '아무런 근거 없이 작성자의 주관적 감정만을 나열한다.' },
+          { key: 'c', text: '과거의 사실만을 나열하고 현재의 쟁점을 다루지 않는다.' },
+          { key: 'd', text: '단 한 사람의 인터뷰만을 근거로 결론을 내린다.' },
+        ],
+        correctAnswer: 'a',
+        explanation: 'CNN 기사는 현장 취재, 당사자 진술, 전문가 견해를 종합하여 균형 있는 시각을 전달합니다.',
+      },
+    ];
+  }
+
+  // 2. 빈칸 받아쓰기 퀴즈 (없을 경우 2문제 자동 생성)
+  let dictationQuizzes = article.dictationQuizzes;
+  if (!dictationQuizzes || dictationQuizzes.length === 0) {
+    const s1 = allSentences[0] || (article.paragraphs && article.paragraphs[0]) || 'Learning English with authentic CNN news deepens critical insight.';
+    const s2 = allSentences[1] || allSentences[0] || 'Careful reading and active discussion empower advanced language proficiency.';
+
+    const words1 = s1.split(/\s+/);
+    const candidate1 = words1.find((w) => w.length >= 5 && /^[a-zA-Z]+$/.test(w)) || words1[Math.floor(words1.length / 2)] || 'news';
+    const cleanWord1 = candidate1.replace(/[^a-zA-Z]/g, '');
+
+    const words2 = s2.split(/\s+/);
+    const candidate2 = words2.find((w) => w.length >= 5 && /^[a-zA-Z]+$/.test(w) && w.toLowerCase() !== cleanWord1.toLowerCase()) || words2[Math.floor(words2.length / 2)] || 'world';
+    const cleanWord2 = candidate2.replace(/[^a-zA-Z]/g, '');
+
+    dictationQuizzes = [
+      {
+        id: 'dict-' + article.id + '-1',
+        displaySentence: s1.replace(cleanWord1, '_____'),
+        targetSentence: s1,
+        blankAnswers: [cleanWord1],
+        userInputs: [''],
+        isCorrect: false,
+        accuracyRate: 0,
+      },
+      {
+        id: 'dict-' + article.id + '-2',
+        displaySentence: s2.replace(cleanWord2, '_____'),
+        targetSentence: s2,
+        blankAnswers: [cleanWord2],
+        userInputs: [''],
+        isCorrect: false,
+        accuracyRate: 0,
+      },
+    ];
+  }
+  let speakingExercises = article.speakingExercises;
+  if (!speakingExercises || speakingExercises.length === 0) {
+    const targetEng = allSentences[0] || (article.paragraphs && article.paragraphs[0]) || article.title;
+    speakingExercises = [
+      {
+        id: `speaking-${article.id}-1`,
+        koreanPrompt: article.koreanSummary || `${article.title}의 핵심 보도 내용과 사회적 함의를 자신의 말로 1분간 영어로 요약 발표하세요.`,
+        targetEnglish: targetEng,
+        isCompleted: false,
+      },
+    ];
+  }
+
+  // 4. 섀도잉 4선 연습 (없을 경우 4개 자동 생성)
+  let shadowingExercises = article.shadowingExercises;
+  if (!shadowingExercises || shadowingExercises.length === 0) {
+    const picked = allSentences.slice(0, 4);
+    while (picked.length < 4) {
+      picked.push(picked[0] || article.title);
+    }
+    shadowingExercises = picked.map((s, idx) => ({
+      id: 'shadow-' + (idx + 1),
+      targetSentence: s,
+      paragraphIndex: Math.min(idx, Math.max(0, (article.paragraphs || []).length - 1)),
+      isCompleted: false,
+    }));
+  }
+
+  let coreVocabularies = article.coreVocabularies;
+  if (!coreVocabularies || coreVocabularies.length === 0) {
+    coreVocabularies = [
+      {
+        id: `vocab-${article.id}-1`,
+        expression: 'breaking development',
+        koreanMeaning: '급박한 상황 전개',
+        contextSentence: allSentences[0] || '',
+        paragraphIndex: 0,
+        isMemorized: false,
+        needsReview: true,
+        partOfSpeech: '명사구',
+      },
+      {
+        id: `vocab-${article.id}-2`,
+        expression: 'critical factor',
+        koreanMeaning: '결정적 요인, 핵심 변수',
+        contextSentence: allSentences[1] || allSentences[0] || '',
+        paragraphIndex: 0,
+        isMemorized: false,
+        needsReview: true,
+        partOfSpeech: '명사구',
+      },
+    ];
+  }
+
+  return {
+    ...article,
+    readingQuestions,
+    comprehensionQuizzes,
+    dictationQuizzes,
+    speakingExercises,
+    shadowingExercises,
+    coreVocabularies,
+  };
+}
+
+
 export function getNewsArticleById(id: string): CnnNewsArticle | undefined {
   const list = loadNewsArticles();
   const found = list.find((a) => a.id === id);
-  if (found) return found;
+  if (found) return ensureArticleStudyData(found);
   if (id === SEED_ARTICLE_LUNG_NODULES.id) {
-    return ensureSeedArticleLungNodules();
+    return ensureArticleStudyData(ensureSeedArticleLungNodules());
   }
   const staticFound = STATIC_2022_01_ARTICLES.find((a) => a.id === id);
-  if (staticFound) return staticFound;
+  if (staticFound) return ensureArticleStudyData(staticFound);
   return undefined;
 }
 

@@ -52,6 +52,7 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
 
   // 음성 재생 상태
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isPlayingAllArticle, setIsPlayingAllArticle] = useState(false);
   const [playingParagraphIndex, setPlayingParagraphIndex] = useState<number | null>(null);
 
   // 문단 메모 상태
@@ -166,11 +167,40 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
   };
 
   // 2. Web Speech API 음성 재생
+  const handlePlayAllArticle = () => {
+    if (isPlayingAudio && isPlayingAllArticle) {
+      audioManager.stop();
+      setIsPlayingAudio(false);
+      setIsPlayingAllArticle(false);
+      setPlayingParagraphIndex(null);
+      return;
+    }
+
+    if (!audioManager.isSpeechSupported()) {
+      alert('현재 브라우저 환경에서는 Web Speech 음성 합성(TTS)이 지원되지 않습니다.');
+      return;
+    }
+
+    const fullText = (article.paragraphs || []).join(' ');
+    if (!fullText.trim()) return;
+
+    audioManager.stop();
+    setIsPlayingAudio(true);
+    setIsPlayingAllArticle(true);
+    setPlayingParagraphIndex(null);
+
+    audioManager.speak(fullText, undefined, 0.9).finally(() => {
+      setIsPlayingAudio(false);
+      setIsPlayingAllArticle(false);
+    });
+  };
+
   const handlePlayParagraph = (index: number) => {
     if (isPlayingAudio && playingParagraphIndex === index) {
       audioManager.stop();
       setIsPlayingAudio(false);
       setPlayingParagraphIndex(null);
+      setIsPlayingAllArticle(false);
       return;
     }
 
@@ -188,6 +218,7 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
 
     audioManager.stop();
     setIsPlayingAudio(true);
+    setIsPlayingAllArticle(false);
     setPlayingParagraphIndex(index);
 
     audioManager.speak(text, undefined, 0.9).finally(() => {
@@ -501,146 +532,164 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
               </div>
             )}
 
-            <div className="text-xs text-slate-400 mb-2 flex items-center justify-between">
-              <span>💡 문장을 클릭하면 <strong>[고급 문장 분석]</strong>으로 바로 이동합니다.</span>
-              <span className="text-[11px] text-slate-500">총 {article.paragraphs.length}개 문단</span>
-            </div>
-
-            {/* 문단 리스트 */}
-            <div className="space-y-6 font-serif">
-              {article.paragraphs.map((paragraphText, pIdx) => {
-                const sentences = splitIntoSentences(paragraphText);
-                const hasNote = !!article.userNotes?.[pIdx];
-                const isPlayingThis = isPlayingAudio && playingParagraphIndex === pIdx;
-
-                return (
-                  <article
-                    key={pIdx}
-                    className={`p-5 rounded-2xl border transition-all duration-200 ${
-                      isPlayingThis
-                        ? 'bg-red-950/30 border-red-500/80 shadow-md'
-                        : 'bg-slate-800/60 border-slate-700/70 hover:border-slate-600'
+            {/* 기사 본문 통합 리더 카드 (본문 전체를 하나로 모음) */}
+            <article className="bg-slate-800/70 border border-slate-700/80 rounded-2xl p-6 sm:p-8 shadow-xl">
+              {/* 본문 통합 상단 제어 바 */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700/70 pb-4 mb-6 text-xs font-sans">
+                <div className="flex items-center space-x-2.5">
+                  <span className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800 text-red-300 font-bold text-xs">
+                    기사 본문 ({article.paragraphs.length}개 문단)
+                  </span>
+                  <button
+                    onClick={handlePlayAllArticle}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 shadow-sm ${
+                      isPlayingAudio && isPlayingAllArticle
+                        ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                        : 'bg-red-950/50 hover:bg-red-900/60 text-red-300 border border-red-800/60'
                     }`}
                   >
-                    {/* 문단 헤더 (문단 번호 & 오디오 & 메모 버튼) */}
-                    <div className="flex items-center justify-between text-xs mb-3 font-sans border-b border-slate-700/50 pb-2">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-mono font-bold text-red-500">¶ {pIdx + 1}</span>
-                        {article.lastReadParagraphIndex === pIdx && (
-                          <span className="text-[10px] bg-red-950/80 border border-red-800 text-red-300 px-1.5 py-0.5 rounded font-sans">
-                            마지막 읽은 위치
-                          </span>
-                        )}
-                        <button
-                          onClick={() => handlePlayParagraph(pIdx)}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition flex items-center space-x-1 ${
-                            isPlayingThis
-                              ? 'bg-red-600 text-white animate-pulse'
-                              : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-                          }`}
-                        >
-                          <span>{isPlayingThis ? '⏹ 정지' : '🔊 문단 낭독'}</span>
-                        </button>
-                      </div>
+                    <span>{isPlayingAudio && isPlayingAllArticle ? '⏹ 전체 낭독 정지' : '🔊 전체 본문 낭독'}</span>
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2 text-slate-400 text-xs">
+                  <span>💡 문장을 클릭하면 <strong>[고급 문장 분석]</strong>으로 바로 이동합니다.</span>
+                </div>
+              </div>
 
-                      <div className="flex items-center space-x-2">
+              {/* 자연스러운 단락 연결 본문 */}
+              <div className="space-y-6 font-serif leading-relaxed">
+                {article.paragraphs.map((paragraphText, pIdx) => {
+                  const sentences = splitIntoSentences(paragraphText);
+                  const hasNote = !!article.userNotes?.[pIdx];
+                  const isPlayingThis = isPlayingAudio && playingParagraphIndex === pIdx;
+
+                  return (
+                    <div
+                      key={pIdx}
+                      className={`relative rounded-xl p-3 transition-all duration-200 ${
+                        isPlayingThis
+                          ? 'bg-red-950/40 border-l-4 border-red-500 pl-4 shadow-md'
+                          : 'hover:bg-slate-750/30 border-l-2 border-transparent'
+                      }`}
+                    >
+                      {/* 문단 번호 & 인라인 도구 버튼 */}
+                      <div className="flex items-center justify-between text-xs mb-2 font-sans">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono font-bold text-red-400 text-xs">¶ {pIdx + 1}</span>
+                          {article.lastReadParagraphIndex === pIdx && (
+                            <span className="text-[10px] bg-red-950/80 border border-red-800 text-red-300 px-1.5 py-0.2 rounded font-sans">
+                              마지막 읽은 위치
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handlePlayParagraph(pIdx)}
+                            className={`px-2 py-0.5 rounded text-[11px] font-semibold transition flex items-center space-x-1 ${
+                              isPlayingThis
+                                ? 'bg-red-600 text-white'
+                                : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300'
+                            }`}
+                          >
+                            <span>{isPlayingThis ? '⏹ 정지' : '🔊 문단 낭독'}</span>
+                          </button>
+                        </div>
+
                         <button
                           onClick={() => {
                             setEditingParagraphIdx(editingParagraphIdx === pIdx ? null : pIdx);
                             setParagraphNoteText(article.userNotes?.[pIdx] || '');
                           }}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                          className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${
                             hasNote
                               ? 'bg-amber-950 text-amber-300 border border-amber-800/80'
-                              : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                              : 'bg-slate-700/60 hover:bg-slate-600 text-slate-300'
                           }`}
                         >
-                          {hasNote ? '📝 문단 메모 보기/수정' : '+ 문단 메모'}
+                          {hasNote ? '📝 문단 메모' : '+ 문단 메모'}
                         </button>
                       </div>
-                    </div>
 
-                    {/* 문단 텍스트 (문장별 클릭 상호작용) */}
-                    <div
-                      style={{ fontSize: `${fontSize}px` }}
-                      className="leading-relaxed text-slate-200 font-serif tracking-normal selection:bg-red-600 selection:text-white"
-                    >
-                      {sentences.map((sent, sIdx) => {
-                        const sentId = `sent-${pIdx}-${sent.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '')}`;
-                        const isAnalyzed = !!article.sentenceAnalyses?.[sentId];
+                      {/* 문단 본문 텍스트 (문장별 클릭 상호작용) */}
+                      <div
+                        style={{ fontSize: `${fontSize}px` }}
+                        className="leading-relaxed text-slate-200 font-serif tracking-normal selection:bg-red-600 selection:text-white"
+                      >
+                        {sentences.map((sent, sIdx) => {
+                          const sentId = `sent-${pIdx}-${sent.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '')}`;
+                          const isAnalyzed = !!article.sentenceAnalyses?.[sentId];
 
-                        return (
-                          <span
-                            key={sIdx}
-                            onClick={() => handleSelectSentenceForAnalysis(sent, pIdx)}
-                            className={`inline cursor-pointer rounded px-0.5 transition-colors ${
-                              isAnalyzed
-                                ? 'bg-red-950/60 border-b border-red-500 text-white font-medium hover:bg-red-900/60'
-                                : 'hover:bg-slate-700/60'
-                            }`}
-                            title="클릭하여 C2 정밀 문장 분석 스튜디오로 이동"
-                          >
-                            {sent}{' '}
-                          </span>
-                        );
-                      })}
-                    </div>
-
-                    {/* 문단 메모 표시 및 편집창 */}
-                    {(editingParagraphIdx === pIdx || hasNote) && (
-                      <div className="mt-4 pt-3 border-t border-slate-700/60 font-sans text-xs">
-                        {editingParagraphIdx === pIdx ? (
-                          <div className="space-y-2 bg-slate-900 p-3 rounded-xl border border-amber-800/60">
-                            <label className="block text-[11px] font-semibold text-amber-400">
-                              ¶{pIdx + 1} 문단 메모 및 독해 요약
-                            </label>
-                            <textarea
-                              rows={3}
-                              value={paragraphNoteText}
-                              onChange={(e) => setParagraphNoteText(e.target.value)}
-                              placeholder="이 문단의 핵심 논지나 모르는 구조, 단어 메모를 자유롭게 적어두세요..."
-                              className="w-full px-3 py-2 text-xs rounded-lg bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-amber-500"
-                            />
-                            <div className="flex justify-end space-x-2">
-                              <button
-                                onClick={() => setEditingParagraphIdx(null)}
-                                className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs"
-                              >
-                                닫기
-                              </button>
-                              <button
-                                onClick={() => handleSaveParagraphNote(pIdx)}
-                                className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs"
-                              >
-                                저장
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-900/40 text-amber-200/90 text-xs flex justify-between items-start">
-                            <div className="space-y-1">
-                              <span className="font-bold text-amber-400 text-[10px] uppercase tracking-wider block">
-                                📌 ¶{pIdx + 1} 문단 메모:
-                              </span>
-                              <p className="whitespace-pre-wrap">{article.userNotes[pIdx]}</p>
-                            </div>
-                            <button
-                              onClick={() => {
-                                setEditingParagraphIdx(pIdx);
-                                setParagraphNoteText(article.userNotes[pIdx]);
-                              }}
-                              className="text-[11px] text-amber-400 hover:underline shrink-0 ml-3"
+                          return (
+                            <span
+                              key={sIdx}
+                              onClick={() => handleSelectSentenceForAnalysis(sent, pIdx)}
+                              className={`inline cursor-pointer rounded px-0.5 transition-colors ${
+                                isAnalyzed
+                                  ? 'bg-red-950/60 border-b border-red-500 text-white font-medium hover:bg-red-900/60'
+                                  : 'hover:bg-slate-700/60'
+                              }`}
+                              title="클릭하여 C2 정밀 문장 분석 스튜디오로 이동"
                             >
-                              수정
-                            </button>
-                          </div>
-                        )}
+                              {sent}{' '}
+                            </span>
+                          );
+                        })}
                       </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
+
+                      {/* 문단 메모 표시 및 편집창 */}
+                      {(editingParagraphIdx === pIdx || hasNote) && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-700/60 font-sans text-xs">
+                          {editingParagraphIdx === pIdx ? (
+                            <div className="space-y-2 bg-slate-900 p-3 rounded-xl border border-amber-800/60">
+                              <label className="block text-[11px] font-semibold text-amber-400">
+                                ¶{pIdx + 1} 문단 메모 및 독해 요약
+                              </label>
+                              <textarea
+                                rows={3}
+                                value={paragraphNoteText}
+                                onChange={(e) => setParagraphNoteText(e.target.value)}
+                                placeholder="이 문단의 핵심 논지나 모르는 구조, 단어 메모를 자유롭게 적어두세요..."
+                                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-amber-500"
+                              />
+                              <div className="flex justify-end space-x-2">
+                                <button
+                                  onClick={() => setEditingParagraphIdx(null)}
+                                  className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs"
+                                >
+                                  닫기
+                                </button>
+                                <button
+                                  onClick={() => handleSaveParagraphNote(pIdx)}
+                                  className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs"
+                                >
+                                  저장
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-2.5 rounded-xl bg-amber-950/20 border border-amber-900/40 text-amber-200/90 text-xs flex justify-between items-start">
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-amber-400 text-[10px] uppercase tracking-wider block">
+                                  📌 ¶{pIdx + 1} 문단 메모:
+                                </span>
+                                <p className="whitespace-pre-wrap">{article.userNotes[pIdx]}</p>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setEditingParagraphIdx(pIdx);
+                                  setParagraphNoteText(article.userNotes[pIdx]);
+                                }}
+                                className="text-[11px] text-amber-400 hover:underline shrink-0 ml-3"
+                              >
+                                수정
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
           </div>
         )}
 
