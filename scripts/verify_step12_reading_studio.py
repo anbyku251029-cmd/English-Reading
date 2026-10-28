@@ -39,7 +39,7 @@ def run_test(name, fn):
         print(f"       -> Exception: {e}")
         return False
 
-# 1. 404 에러 처리 및 Vercel 배포 환경 대응 검증
+# 1. 28권 전권 자동 폴백 및 Vercel 배포 모드 무결성 검증
 def test_book_selector_404_handling():
     modal_path = os.path.join(PROJECT_ROOT, "src", "components", "BookSelectorModal.tsx")
     if not os.path.exists(modal_path):
@@ -48,17 +48,16 @@ def test_book_selector_404_handling():
     with open(modal_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    has_404_type = "404_SERVER_UNREACHABLE" in content
-    has_503_type = "503_DATABASE_NOT_FOUND" in content
-    has_env_badge = "로컬 서버 미연결 (Vercel 배포 모드)" in content
-    has_preset_switch = "추천 명작 원서 둘러보기" in content
-    has_retry_btn = "다시 시도" in content
-    has_reason_explain = "Vercel 배포 환경" in content or "저작권" in content
+    has_static_service = "getStatic28Books" in content and "getStaticBookChapters" in content and "getStaticChapterParagraphs" in content
+    has_fallback_state = "isStaticFallback" in content
+    has_env_badge = "28권 전권 준비 완료" in content or "로컬 SQLite 서버 연결됨" in content
+    has_quick_read = "handleQuickSelectBookChapter1" in content or "바로 읽기" in content
+    has_retry_btn = "fetchLocalBooks" in content
 
-    if not all([has_404_type, has_503_type, has_env_badge, has_preset_switch, has_retry_btn, has_reason_explain]):
-        return False, f"404 처리 요소 누락: 404={has_404_type}, 503={has_503_type}, 배지={has_env_badge}, 프리셋전환={has_preset_switch}, 재시도={has_retry_btn}"
+    if not all([has_static_service, has_fallback_state, has_env_badge, has_quick_read, has_retry_btn]):
+        return False, f"28권 자동 선택 요소 누락: service={has_static_service}, fallback={has_fallback_state}, badge={has_env_badge}, quick_read={has_quick_read}"
     
-    return True, "404 서버 미연결/Vercel 배포 모드 식별, 사유 안내, 추천 원서 유도 및 재시도 버튼 완비"
+    return True, "Vercel 배포 모드에서도 404 에러 없이 28권 전권이 자동 로드되며, [1장 바로 읽기] 및 챕터 선택 완비"
 
 # 2. 헤더 3대 단계 개편 및 AI 코치 토글 제거 검증
 def test_header_3_steps_and_no_ai_coach():

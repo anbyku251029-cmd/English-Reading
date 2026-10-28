@@ -15,6 +15,13 @@ import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { CnnNewsCategoryView } from './components/cnnNews/CnnNewsCategoryView';
 import { CnnNewsReaderView } from './components/cnnNews/CnnNewsReaderView';
 import { PRESET_BOOKS, BookPreset } from './data/presetBooks';
+import {
+  getStaticChapterParagraphs,
+  getStaticChapterByNumbers,
+  getStaticBookChapters,
+  getStaticNextChapter,
+  getStaticPrevChapter,
+} from './data/staticBooksService';
 import { Message, StudyPack, KeyExpression, LearnerLevel, ReadingProgress } from './types';
 import {
   loadSavedExpressions,
@@ -132,6 +139,33 @@ export default function App() {
               }
             }
           }
+          // Static fallback for restored progress
+          const staticRes = getStaticChapterParagraphs(progress.chapterId);
+          if (staticRes && staticRes.paragraphs && staticRes.paragraphs.length > 0) {
+            const ch = staticRes.chapter;
+            const bookPreset: BookPreset = {
+              id: `sqlite-${ch.book_id}-${ch.id}`,
+              dbBookId: ch.book_id,
+              dbChapterId: ch.id,
+              bookNumber: ch.book_number,
+              title: ch.book_title,
+              author: ch.author,
+              series: 'Magic Tree House',
+              level: 'Beginner (A2)',
+              levelKey: 'beginner',
+              chapter: ch.title,
+              currentChapterNumber: ch.chapter_number,
+              coverGradient: 'from-amber-600 via-amber-700 to-indigo-950',
+              tagline: `Magic Tree House #${ch.book_number} — ${ch.book_title}`,
+              passage: staticRes.paragraphs.map((p: any) => p.content).join('\n\n'),
+              paragraphs: staticRes.paragraphs,
+              starterPrompt: `오늘 함께 읽을 책은 Magic Tree House #${ch.book_number} "${ch.book_title}"의 "${ch.title}"이야!`,
+              keyExpressionsPreview: ['Magic Tree House 원서', `${staticRes.paragraphs.length}개 문단`],
+            };
+            setCurrentBook(bookPreset);
+            initBookSession(bookPreset);
+            return;
+          }
         }
       } catch (e) {
         console.warn('Failed to restore progress, fallback to preset book', e);
@@ -184,7 +218,24 @@ export default function App() {
           }
         }
       } catch (e) {
-        console.warn('Failed to switch chapter from db:', e);
+        console.warn('Failed to switch chapter from db, using static fallback:', e);
+      }
+
+      // Static fallback for chapter selection
+      const staticRes = getStaticChapterByNumbers(currentBook.bookNumber || 1, chapterNum);
+      if (staticRes && staticRes.paragraphs && staticRes.paragraphs.length > 0) {
+        const ch = staticRes.chapter;
+        const updatedBook: BookPreset = {
+          ...currentBook,
+          dbChapterId: ch.id,
+          chapter: ch.title,
+          currentChapterNumber: ch.chapter_number,
+          passage: staticRes.paragraphs.map((p) => p.content).join('\n\n'),
+          paragraphs: staticRes.paragraphs,
+        };
+        setCurrentBook(updatedBook);
+        initBookSession(updatedBook);
+        return;
       }
     }
 
@@ -219,10 +270,18 @@ export default function App() {
           if (currentIndex >= 0 && currentIndex < chapters.length - 1) {
             const nextCh = chapters[currentIndex + 1];
             handleSelectChapter(nextCh.chapter_number);
+            return;
           }
         }
       } catch (e) {
-        console.warn('Failed to switch to next chapter', e);
+        console.warn('Failed to switch to next chapter from api, fallback to static:', e);
+      }
+
+      // Static fallback
+      const nextStatic = getStaticNextChapter(currentBook.dbBookId, currentBook.dbChapterId || 0);
+      if (nextStatic) {
+        handleSelectChapter(nextStatic.chapter_number);
+        return;
       }
     } else if (currentBook.chapters) {
       const curNum = currentBook.currentChapterNumber || 1;
@@ -243,10 +302,18 @@ export default function App() {
           if (currentIndex > 0) {
             const prevCh = chapters[currentIndex - 1];
             handleSelectChapter(prevCh.chapter_number);
+            return;
           }
         }
       } catch (e) {
-        console.warn('Failed to switch to prev chapter', e);
+        console.warn('Failed to switch to prev chapter from api, fallback to static:', e);
+      }
+
+      // Static fallback
+      const prevStatic = getStaticPrevChapter(currentBook.dbBookId, currentBook.dbChapterId || 0);
+      if (prevStatic) {
+        handleSelectChapter(prevStatic.chapter_number);
+        return;
       }
     } else if (currentBook.chapters) {
       const curNum = currentBook.currentChapterNumber || 1;

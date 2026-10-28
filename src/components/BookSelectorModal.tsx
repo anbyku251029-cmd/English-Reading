@@ -13,9 +13,15 @@ import {
   Database,
   Layers,
   FileText,
+  Zap,
 } from 'lucide-react';
 import { PRESET_BOOKS, BookPreset } from '../data/presetBooks';
 import { LocalBook, LocalChapter, LocalParagraph } from '../types';
+import {
+  getStatic28Books,
+  getStaticBookChapters,
+  getStaticChapterParagraphs,
+} from '../data/staticBooksService';
 
 interface BookSelectorModalProps {
   isOpen: boolean;
@@ -38,6 +44,7 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
   const [localBooks, setLocalBooks] = useState<LocalBook[]>([]);
   const [isLoadingBooks, setIsLoadingBooks] = useState<boolean>(false);
   const [booksError, setBooksError] = useState<string | null>(null);
+  const [isStaticFallback, setIsStaticFallback] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Selected book for chapter expansion
@@ -58,31 +65,34 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
   >('Intermediate (B1-B2)');
   const [customPassage, setCustomPassage] = useState('');
 
-  // Fetch local books from SQLite API
+  // Fetch local books from SQLite API with automatic static fallback
   const fetchLocalBooks = async () => {
     setIsLoadingBooks(true);
     setBooksError(null);
     try {
       const res = await fetch('/api/books');
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        if (res.status === 404) {
-          throw new Error('404_SERVER_UNREACHABLE');
-        } else if (res.status === 503 || errData?.error?.code === 'DATABASE_NOT_FOUND') {
-          throw new Error('503_DATABASE_NOT_FOUND');
-        } else {
-          throw new Error(errData?.error?.message || `서버 오류 (${res.status})`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.books) && data.books.length > 0) {
+          setLocalBooks(data.books);
+          setIsStaticFallback(false);
+          setIsLoadingBooks(false);
+          return;
         }
       }
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.books)) {
-        setLocalBooks(data.books);
-      } else {
-        throw new Error('도서 목록 형식이 올바르지 않습니다.');
-      }
+    } catch (e) {
+      console.warn('Backend /api/books unavailable, activating automatic 28 books dataset', e);
+    }
+
+    // Fallback: 28권 전체 정적 데이터를 즉시 자동 로드! (404 에러 미노출)
+    try {
+      const staticBooks = getStatic28Books() as LocalBook[];
+      setLocalBooks(staticBooks);
+      setIsStaticFallback(true);
+      setBooksError(null);
     } catch (err: any) {
-      console.error('Failed to fetch books:', err);
-      setBooksError(err.message || '도서 목록을 불러오는 중 오류가 발생했습니다.');
+      console.error('Failed to load static books:', err);
+      setBooksError('28권 데이터를 로드하는 중 오류가 발생했습니다.');
     } finally {
       setIsLoadingBooks(false);
     }
@@ -108,70 +118,123 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
     setChaptersError(null);
     setChapters([]);
 
+    // 1. If in static fallback mode, directly fetch static chapters
+    if (isStaticFallback) {
+      const staticChs = getStaticBookChapters(book.id) as LocalChapter[];
+      setChapters(staticChs);
+      setIsLoadingChapters(false);
+      return;
+    }
+
+    // 2. Otherwise try backend API, with fallback on error
     try {
       const res = await fetch(`/api/books/${book.id}/chapters`);
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `챕터 로드 오류 (${res.status})`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.chapters) && data.chapters.length > 0) {
+          setChapters(data.chapters);
+          setIsLoadingChapters(false);
+          return;
+        }
       }
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.chapters)) {
-        setChapters(data.chapters);
-      } else {
-        throw new Error('챕터 데이터 형식이 올바르지 않습니다.');
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch chapters:', err);
-      setChaptersError(err.message || '챕터 목록을 불러오는 중 오류가 발생했습니다.');
-    } finally {
-      setIsLoadingChapters(false);
+    } catch (e) {
+      console.warn('Failed to fetch chapters from api, using static chapters', e);
     }
+
+    // Fallback to static chapters
+    const fallbackChs = getStaticBookChapters(book.id) as LocalChapter[];
+    setChapters(fallbackChs);
+    setIsLoadingChapters(false);
   };
 
   // Load actual paragraphs for chosen chapter and update App state
   const handleSelectChapterFromDb = async (book: LocalBook, chapter: LocalChapter) => {
     setIsLoadingParagraphs(true);
+
+    // 1. If in static fallback mode, directly use static paragraphs
+    if (isStaticFallback) {
+      const staticResult = getStaticChapterParagraphs(chapter.id);
+      if (staticResult && staticResult.paragraphs.length > 0) {
+        applyBookSession(book, chapter, staticResult.paragraphs as LocalParagraph[]);
+        setIsLoadingParagraphs(false);
+        return;
+      }
+    }
+
+    // 2. Try backend API with automatic fallback
     try {
       const res = await fetch(`/api/chapters/${chapter.id}/paragraphs`);
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `본문 로드 오류 (${res.status})`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.paragraphs) && data.paragraphs.length > 0) {
+          applyBookSession(book, chapter, data.paragraphs);
+          setIsLoadingParagraphs(false);
+          return;
+        }
       }
-      const data = await res.json();
-      if (!data.ok || !Array.isArray(data.paragraphs) || data.paragraphs.length === 0) {
-        throw new Error('해당 챕터의 본문 문단이 비어 있습니다.');
-      }
-
-      const paragraphs: LocalParagraph[] = data.paragraphs;
-      const combinedPassage = paragraphs.map((p) => p.content).join('\n\n');
-
-      const bookPreset: BookPreset = {
-        id: `sqlite-${book.id}-${chapter.id}`,
-        dbBookId: book.id,
-        dbChapterId: chapter.id,
-        bookNumber: book.book_number,
-        title: book.title,
-        author: book.author,
-        series: 'Magic Tree House',
-        level: 'Beginner (A2)',
-        levelKey: 'beginner',
-        chapter: chapter.title,
-        currentChapterNumber: chapter.chapter_number,
-        coverGradient: 'from-amber-600 via-amber-700 to-indigo-950',
-        tagline: `Magic Tree House #${book.book_number} — ${book.title}`,
-        passage: combinedPassage,
-        paragraphs: paragraphs,
-        starterPrompt: `오늘 함께 읽을 책은 Magic Tree House #${book.book_number} "${book.title}"의 "${chapter.title}"이야! 직독직해와 회화 코칭을 시작해줘.`,
-        keyExpressionsPreview: ['로컬 SQLite 원서', `${paragraphs.length}개 문단`],
-      };
-
-      onSelectBook(bookPreset);
-      onClose();
-    } catch (err: any) {
-      alert(`본문 로드 실패: ${err.message}`);
-    } finally {
-      setIsLoadingParagraphs(false);
+    } catch (e) {
+      console.warn('Failed to fetch paragraphs from api, fallback to static paragraphs', e);
     }
+
+    // Fallback
+    const staticResult = getStaticChapterParagraphs(chapter.id);
+    if (staticResult && staticResult.paragraphs.length > 0) {
+      applyBookSession(book, chapter, staticResult.paragraphs as LocalParagraph[]);
+    } else {
+      alert('해당 챕터의 본문 문단을 불러오지 못했습니다.');
+    }
+    setIsLoadingParagraphs(false);
+  };
+
+  // Automatically select Book & Chapter 1 directly
+  const handleQuickSelectBookChapter1 = async (book: LocalBook, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsLoadingParagraphs(true);
+
+    // Get chapter 1
+    const chs = getStaticBookChapters(book.id);
+    const firstChapter = chs.find((c) => c.chapter_number === 1) || chs[0];
+
+    if (!firstChapter) {
+      handleSelectBookCard(book);
+      setIsLoadingParagraphs(false);
+      return;
+    }
+
+    const staticResult = getStaticChapterParagraphs(firstChapter.id);
+    if (staticResult && staticResult.paragraphs.length > 0) {
+      applyBookSession(book, firstChapter as LocalChapter, staticResult.paragraphs as LocalParagraph[]);
+    } else {
+      handleSelectBookCard(book);
+    }
+    setIsLoadingParagraphs(false);
+  };
+
+  const applyBookSession = (book: LocalBook, chapter: LocalChapter, paragraphs: LocalParagraph[]) => {
+    const combinedPassage = paragraphs.map((p) => p.content).join('\n\n');
+
+    const bookPreset: BookPreset = {
+      id: `sqlite-${book.id}-${chapter.id}`,
+      dbBookId: book.id,
+      dbChapterId: chapter.id,
+      bookNumber: book.book_number,
+      title: book.title,
+      author: book.author,
+      series: 'Magic Tree House',
+      level: 'Beginner (A2)',
+      levelKey: 'beginner',
+      chapter: chapter.title,
+      currentChapterNumber: chapter.chapter_number,
+      coverGradient: 'from-amber-600 via-amber-700 to-indigo-950',
+      tagline: `Magic Tree House #${book.book_number} — ${book.title}`,
+      passage: combinedPassage,
+      paragraphs: paragraphs,
+      starterPrompt: `오늘 함께 읽을 책은 Magic Tree House #${book.book_number} "${book.title}"의 "${chapter.title}"이야!`,
+      keyExpressionsPreview: ['Magic Tree House 원서', `${paragraphs.length}개 문단`],
+    };
+
+    onSelectBook(bookPreset);
+    onClose();
   };
 
   const handleSelectPreset = (book: BookPreset) => {
@@ -198,78 +261,75 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
       author: customAuthor.trim() || 'Custom Author',
       chapter: customChapter.trim() || 'Selected Passage',
       level: customLevel,
-      levelKey,
-      coverGradient: 'from-amber-600 via-orange-600 to-indigo-900',
-      tagline: '직접 입력한 원서 텍스트로 진행하는 1:1 맞춤 코칭',
+      levelKey: levelKey,
+      coverGradient: 'from-indigo-600 via-purple-600 to-slate-900',
+      tagline: '직접 입력한 원서 본문으로 시작하는 맞춤형 독서 & 낭독 세션',
       passage: customPassage.trim(),
-      starterPrompt: `오늘 함께 읽을 책은 "${customTitle || '내가 고른 원서'}"의 "${customChapter || '본문'}"이야! 직독직해와 회화 코칭을 시작해줘.`,
-      keyExpressionsPreview: ['직접 입력 텍스트', '문맥 분석 진행'],
+      starterPrompt: `오늘 함께 읽을 책은 "${customTitle.trim() || '내 원서'}"의 본문이야. 소리 내어 편안하게 읽어보자!`,
+      keyExpressionsPreview: ['사용자 등록 원서', '커스텀 텍스트'],
     };
 
     onSelectBook(customBook);
     onClose();
   };
 
-  if (!isOpen) return null;
-
-  const filteredLocalBooks = localBooks.filter((b) => {
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return true;
+  // Filter books by search query
+  const filteredBooks = localBooks.filter((b) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
     return (
       b.title.toLowerCase().includes(q) ||
       b.author.toLowerCase().includes(q) ||
-      `#${b.book_number}`.includes(q) ||
-      String(b.book_number) === q
+      `#${b.book_number}`.includes(q)
     );
   });
 
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100">
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-amber-50/50 to-white">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
-              <BookOpen className="w-4 h-4" />
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-amber-500/10 text-amber-700 rounded-2xl">
+              <BookOpen className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 flex flex-wrap items-center gap-2">
-                <span>원서 서재 &amp; 챕터 선택</span>
-                {isLoadingBooks ? (
-                  <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 flex items-center gap-1">
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                    서버 연결 확인 중...
-                  </span>
-                ) : localBooks.length > 0 ? (
-                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60 flex items-center gap-1">
-                    <Database className="w-3 h-3" />
-                    로컬 서버 연결됨 (28권 완비)
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg sm:text-xl font-bold text-slate-800">
+                  원서 서재 & 챕터 선택
+                </h2>
+                {isStaticFallback ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200" title="28권 전체 정적 데이터가 자동으로 연결되어 오프라인/배포 환경에서도 100% 이용 가능합니다.">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>28권 전권 준비 완료 (자동 선택 모드)</span>
                   </span>
                 ) : (
-                  <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/60 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    로컬 서버 미연결 (Vercel 배포 모드)
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse" />
+                    <span>로컬 SQLite 서버 연결됨 (28권 완비)</span>
                   </span>
                 )}
-              </h2>
-              <p className="text-xs text-slate-500">
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
                 원하는 권과 챕터를 선택하면 전체 본문이 즉시 독서실로 로드됩니다.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Tab switcher */}
-        <div className="px-6 pt-3 pb-1 border-b border-slate-100 flex space-x-4 text-xs font-bold bg-slate-50/50">
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-100 px-6 pt-3 space-x-6 text-sm font-semibold bg-slate-50/50">
           <button
             onClick={() => setActiveTab('sqlite')}
-            className={`pb-2.5 border-b-2 transition flex items-center space-x-1.5 ${
+            className={`pb-2.5 border-b-2 transition flex items-center space-x-1.5 cursor-pointer ${
               activeTab === 'sqlite'
                 ? 'border-amber-600 text-amber-800'
                 : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -280,7 +340,7 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('presets')}
-            className={`pb-2.5 border-b-2 transition flex items-center space-x-1.5 ${
+            className={`pb-2.5 border-b-2 transition flex items-center space-x-1.5 cursor-pointer ${
               activeTab === 'presets'
                 ? 'border-amber-600 text-amber-800'
                 : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -291,7 +351,7 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('custom')}
-            className={`pb-2.5 border-b-2 transition flex items-center space-x-1.5 ${
+            className={`pb-2.5 border-b-2 transition flex items-center space-x-1.5 cursor-pointer ${
               activeTab === 'custom'
                 ? 'border-amber-600 text-amber-800'
                 : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -315,7 +375,7 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="도서 제목 검색 (예: Dinosaurs, Titanic, Knight...)"
+                    placeholder="도서 제목 또는 번호 검색 (예: Dinosaurs, Titanic, #1, Knight...)"
                     className="w-full pl-9 pr-4 py-2 bg-slate-100 hover:bg-slate-100/80 focus:bg-white text-xs text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition"
                   />
                   {searchQuery && (
@@ -330,7 +390,7 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
                 <button
                   onClick={fetchLocalBooks}
                   disabled={isLoadingBooks}
-                  className="px-3 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl flex items-center gap-1.5 transition disabled:opacity-50"
+                  className="px-3 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
                   title="도서 목록 새로고침"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBooks ? 'animate-spin' : ''}`} />
@@ -342,272 +402,242 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
               {isLoadingBooks && (
                 <div className="py-16 text-center text-slate-500">
                   <RefreshCw className="w-6 h-6 animate-spin mx-auto text-amber-600 mb-2" />
-                  <p className="text-xs font-medium">SQLite 데이터베이스에서 도서 목록을 불러오는 중입니다...</p>
+                  <p className="text-xs font-medium">28권 원서 서재를 불러오는 중입니다...</p>
                 </div>
               )}
 
-              {/* Error State */}
+              {/* Error State (Only shown if static fallback fails too) */}
               {!isLoadingBooks && booksError && (
                 <div className="p-5 rounded-2xl bg-amber-50/90 border border-amber-200 text-slate-800 space-y-3 mb-4">
                   <div className="flex items-start gap-3">
                     <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div className="flex-1 text-xs space-y-2">
-                      <p className="font-bold text-amber-900 text-sm">
-                        {booksError === '404_SERVER_UNREACHABLE' || booksError.includes('404')
-                          ? '로컬 원서 백엔드 서버 미연결 (HTTP 404)'
-                          : booksError === '503_DATABASE_NOT_FOUND'
-                          ? 'SQLite 도서 데이터베이스 파일 누락 (503)'
-                          : '도서 목록을 불러오지 못했습니다.'}
-                      </p>
-                      {booksError === '404_SERVER_UNREACHABLE' || booksError.includes('404') ? (
-                        <div className="text-slate-700 leading-relaxed space-y-2">
-                          <p>
-                            Magic Tree House 28권(총 300장, 14,963문단) 원서 데이터는 <strong>저작권 보호 및 보안 격리 규칙</strong>에 따라 Vercel 원격 저장소에 배포되지 않으며, 사용자 로컬 PC 환경에서만 제공됩니다.
-                          </p>
-                          <div className="p-3 rounded-xl bg-white/90 border border-amber-200 text-[11px] space-y-1.5">
-                            <p className="font-semibold text-amber-800">💡 학습 안내:</p>
-                            <p>• <strong>Vercel 배포 환경:</strong> 상단의 <strong>[추천 명작 원서]</strong> 탭 또는 <strong>[내 원서 텍스트 직접 입력]</strong>을 선택하시면 오프라인으로 읽기·듣기·말하기의 모든 기능을 즉시 이용하실 수 있습니다.</p>
-                            <p>• <strong>로컬 28권 전체 이용:</strong> 로컬 터미널에서 <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold">npm run dev</code> (또는 <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold">tsx server.ts</code>)를 실행 후 접속하시면 28권 전체가 정상 로드됩니다.</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-slate-600">{booksError}</p>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('presets')}
-                          className="px-3.5 py-1.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition flex items-center gap-1.5 shadow-xs"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>추천 명작 원서 둘러보기</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={fetchLocalBooks}
-                          disabled={isLoadingBooks}
-                          className="px-3.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition flex items-center gap-1"
-                        >
-                          <RefreshCw className={`w-3 h-3 ${isLoadingBooks ? 'animate-spin' : ''}`} />
-                          <span>다시 시도</span>
-                        </button>
-                      </div>
+                      <p className="font-bold text-amber-900 text-sm">도서 목록을 불러오지 못했습니다.</p>
+                      <p className="text-slate-600">{booksError}</p>
+                      <button
+                        onClick={fetchLocalBooks}
+                        className="px-3 py-1.5 bg-amber-600 text-white rounded-lg font-bold text-xs hover:bg-amber-700 transition"
+                      >
+                        다시 시도
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
 
               {/* Books Grid */}
-              {!isLoadingBooks && !booksError && (
-                <div>
-                  {filteredLocalBooks.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400 text-xs">
-                      검색 조건에 맞는 도서가 없습니다.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                      {filteredLocalBooks.map((book) => {
-                        const isExpanded = selectedBookForChapters?.id === book.id;
-                        const isCurrentActiveBook =
-                          currentBook.dbBookId === book.id ||
-                          currentBook.title.toLowerCase() === book.title.toLowerCase();
+              {!isLoadingBooks && filteredBooks.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {filteredBooks.map((book) => {
+                    const isCurrent = currentBook.dbBookId === book.id || currentBook.bookNumber === book.book_number;
+                    const isExpanded = selectedBookForChapters?.id === book.id;
 
-                        return (
-                          <div
-                            key={book.id}
-                            className={`rounded-2xl border transition overflow-hidden ${
-                              isExpanded
-                                ? 'border-amber-500 bg-amber-50/20 ring-2 ring-amber-400/30'
-                                : isCurrentActiveBook
-                                ? 'border-amber-400 bg-amber-50/40 shadow-xs'
-                                : 'border-slate-200 bg-white hover:border-amber-300 hover:bg-slate-50/60 shadow-xs'
-                            }`}
-                          >
-                            {/* Card Header (Click to expand chapters) */}
-                            <div
-                              onClick={() => handleSelectBookCard(book)}
-                              className="p-4 cursor-pointer flex items-start justify-between gap-3"
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 text-white flex flex-col items-center justify-center font-bold shrink-0 shadow-xs">
-                                  <span className="text-[9px] uppercase tracking-tighter opacity-80">Book</span>
-                                  <span className="text-sm leading-none">#{book.book_number}</span>
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100/70 px-1.5 py-0.5 rounded">
-                                      Magic Tree House
-                                    </span>
-                                    {isCurrentActiveBook && (
-                                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                        <Check className="w-3 h-3" />
-                                        현재 도서
-                                      </span>
-                                    )}
-                                  </div>
-                                  <h3 className="font-bold text-slate-900 text-sm leading-snug">
-                                    {book.title}
-                                  </h3>
-                                  <p className="text-[11px] text-slate-500 mt-0.5">
-                                    저자: {book.author}
-                                  </p>
-                                </div>
+                    return (
+                      <div
+                        key={book.id}
+                        className={`rounded-2xl border transition-all duration-200 ${
+                          isExpanded
+                            ? 'border-amber-500 ring-2 ring-amber-400/40 bg-amber-50/20 shadow-md col-span-1 md:col-span-2'
+                            : isCurrent
+                            ? 'border-amber-400 bg-amber-50/40 shadow-xs hover:shadow-md'
+                            : 'border-slate-200 bg-white hover:border-amber-300 hover:bg-slate-50/60 shadow-xs hover:shadow-sm'
+                        }`}
+                      >
+                        {/* Book Card Header */}
+                        <div
+                          onClick={() => handleSelectBookCard(book)}
+                          className="p-4 flex items-center justify-between cursor-pointer select-none"
+                        >
+                          <div className="flex items-center space-x-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center text-white font-extrabold text-sm shrink-0 shadow-xs">
+                              #{book.book_number}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h3 className="font-bold text-slate-800 text-sm truncate">
+                                  {book.title}
+                                </h3>
+                                {isCurrent && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-900 shrink-0">
+                                    현재 학습 중
+                                  </span>
+                                )}
                               </div>
-
-                              <div className="text-right shrink-0">
-                                <div className="text-[11px] font-bold text-slate-700 flex items-center justify-end gap-1">
+                              <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                                <span>{book.author}</span>
+                                <span>•</span>
+                                <span className="flex items-center gap-0.5">
                                   <Layers className="w-3 h-3 text-slate-400" />
-                                  <span>{book.chapter_count}개 장</span>
-                                </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
-                                  {book.paragraph_count.toLocaleString()}개 문단
-                                </div>
-                                <div className="mt-2 text-[11px] font-semibold text-amber-700 flex items-center justify-end gap-0.5">
-                                  <span>{isExpanded ? '챕터 닫기' : '챕터 선택'}</span>
-                                  <ChevronRight
-                                    className={`w-3 h-3 transition-transform ${
-                                      isExpanded ? 'rotate-90' : ''
-                                    }`}
-                                  />
-                                </div>
+                                  {book.chapter_count}개 챕터
+                                </span>
+                                <span>•</span>
+                                <span className="flex items-center gap-0.5">
+                                  <FileText className="w-3 h-3 text-slate-400" />
+                                  {book.paragraph_count}문단
+                                </span>
                               </div>
                             </div>
-
-                            {/* Expanded Chapters Drawer */}
-                            {isExpanded && (
-                              <div className="p-4 pt-3 border-t border-amber-200/60 bg-white/90">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                                    <FileText className="w-3.5 h-3.5 text-amber-600" />
-                                    <span>읽을 챕터(장)를 선택하세요:</span>
-                                  </span>
-                                  <span className="text-[10px] text-slate-400">
-                                    총 {chapters.length}개 챕터
-                                  </span>
-                                </div>
-
-                                {isLoadingChapters && (
-                                  <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
-                                    <span>챕터 목록을 불러오는 중...</span>
-                                  </div>
-                                )}
-
-                                {!isLoadingChapters && chaptersError && (
-                                  <div className="p-2.5 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center justify-between">
-                                    <span>{chaptersError}</span>
-                                    <button
-                                      onClick={() => handleSelectBookCard(book)}
-                                      className="font-bold underline"
-                                    >
-                                      재시도
-                                    </button>
-                                  </div>
-                                )}
-
-                                {!isLoadingChapters && !chaptersError && chapters.length > 0 && (
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">
-                                    {chapters.map((ch) => {
-                                      const isCurrentCh =
-                                        isCurrentActiveBook &&
-                                        (currentBook.dbChapterId === ch.id ||
-                                          currentBook.currentChapterNumber === ch.chapter_number);
-                                      const isZeroParagraphs = ch.paragraph_count === 0;
-                                      const isPrologue = ch.chapter_number === 0 || ch.title.toLowerCase().includes('prologue');
-                                      const chapterLabel = isPrologue ? 'Prologue' : `Ch.${ch.chapter_number}`;
-                                      const cleanTitle = isPrologue ? (ch.title.toLowerCase().includes('prologue') ? ch.title : 'Prologue') : ch.title.replace(/^\d+\.\s*/, '');
-
-                                      return (
-                                        <button
-                                          key={ch.id}
-                                          type="button"
-                                          disabled={isLoadingParagraphs || isZeroParagraphs}
-                                          onClick={() => handleSelectChapterFromDb(book, ch)}
-                                          className={`px-2.5 py-2 text-left rounded-xl text-xs font-medium transition flex items-center justify-between border ${
-                                            isZeroParagraphs
-                                              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
-                                              : isCurrentCh
-                                              ? 'bg-amber-600 text-white border-amber-700 shadow-xs cursor-pointer'
-                                              : 'bg-slate-50 hover:bg-amber-50 hover:text-amber-900 border-slate-200/80 text-slate-800 cursor-pointer'
-                                          }`}
-                                          title={isZeroParagraphs ? '본문이 준비 중인 챕터입니다.' : ch.title}
-                                        >
-                                          <div className="truncate pr-2">
-                                            <span className="font-bold mr-1">
-                                              {chapterLabel}
-                                            </span>
-                                            <span>{cleanTitle}</span>
-                                          </div>
-                                          <span
-                                            className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded ${
-                                              isCurrentCh
-                                                ? 'bg-amber-700/60 text-amber-100'
-                                                : isZeroParagraphs
-                                                ? 'bg-slate-200 text-slate-500'
-                                                : 'bg-white text-slate-500 border border-slate-200/60'
-                                            }`}
-                                          >
-                                            {isZeroParagraphs ? '준비중' : `${ch.paragraph_count}문단`}
-                                          </span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* Fast Read Chapter 1 Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickSelectBookChapter1(book, e)}
+                              disabled={isLoadingParagraphs}
+                              className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
+                              title="1장 본문으로 즉시 이동하여 읽기 시작"
+                            >
+                              <Zap className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">1장</span> 바로 읽기
+                            </button>
+
+                            <button
+                              type="button"
+                              className={`p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition ${
+                                isExpanded ? 'rotate-90 text-amber-600' : ''
+                              }`}
+                              title={isExpanded ? '챕터 목록 접기' : '챕터 목록 펼치기'}
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded Chapters Drawer */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-200/80 bg-slate-50/70 p-4 rounded-b-2xl animate-in slide-in-from-top-2 duration-150">
+                            <div className="flex items-center justify-between mb-3 text-xs text-slate-600 font-semibold">
+                              <span className="flex items-center gap-1.5">
+                                <Layers className="w-4 h-4 text-amber-600" />
+                                <span>챕터 목록 선택 (클릭 시 해당 챕터 본문으로 즉시 로드)</span>
+                              </span>
+                              {isLoadingChapters && (
+                                <span className="flex items-center gap-1 text-slate-400">
+                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                  불러오는 중...
+                                </span>
+                              )}
+                            </div>
+
+                            {chaptersError && (
+                              <p className="text-xs text-rose-600 mb-2">{chaptersError}</p>
+                            )}
+
+                            {!isLoadingChapters && chapters.length === 0 && !chaptersError && (
+                              <p className="text-xs text-slate-400 py-3 text-center">등록된 챕터가 없습니다.</p>
+                            )}
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                              {chapters.map((ch) => {
+                                const isCurrentChapter =
+                                  isCurrent && (currentBook.dbChapterId === ch.id || currentBook.chapter === ch.title);
+
+                                return (
+                                  <button
+                                    key={ch.id}
+                                    onClick={() => handleSelectChapterFromDb(book, ch)}
+                                    disabled={isLoadingParagraphs}
+                                    className={`p-2.5 rounded-xl text-left transition border flex items-center justify-between group cursor-pointer ${
+                                      isCurrentChapter
+                                        ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                                        : 'bg-white hover:bg-amber-50/80 text-slate-800 border-slate-200 hover:border-amber-300'
+                                    }`}
+                                  >
+                                    <div className="min-w-0 pr-1">
+                                      <p className="text-xs font-bold truncate">
+                                        {ch.title}
+                                      </p>
+                                      <p
+                                        className={`text-[10px] mt-0.5 ${
+                                          isCurrentChapter ? 'text-amber-100' : 'text-slate-400'
+                                        }`}
+                                      >
+                                        Chapter {ch.chapter_number} • {ch.paragraph_count}문단
+                                      </p>
+                                    </div>
+                                    <div
+                                      className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                                        isCurrentChapter
+                                          ? 'bg-white text-amber-600'
+                                          : 'bg-slate-100 text-slate-400 group-hover:bg-amber-100 group-hover:text-amber-600'
+                                      }`}
+                                    >
+                                      <Check className="w-3 h-3" />
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {!isLoadingBooks && filteredBooks.length === 0 && !booksError && (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  검색 조건에 맞는 도서가 없습니다.
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB 2: 추천 명작 원서 (PRESETS) */}
+          {/* TAB 2: 추천 명작 원서 (5선) */}
           {activeTab === 'presets' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {PRESET_BOOKS.map((b) => {
-                const isSelected = currentBook.id === b.id;
-
+              {PRESET_BOOKS.map((book) => {
+                const isSelected = currentBook.id === book.id && !currentBook.dbBookId;
                 return (
                   <div
-                    key={b.id}
-                    onClick={() => handleSelectPreset(b)}
-                    className={`p-4 rounded-2xl border transition text-left cursor-pointer relative group flex flex-col justify-between ${
+                    key={book.id}
+                    onClick={() => handleSelectPreset(book)}
+                    className={`relative p-5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                       isSelected
-                        ? 'border-amber-500 bg-amber-50/40 ring-2 ring-amber-400/30'
-                        : 'border-slate-200 bg-white hover:border-amber-300 hover:bg-slate-50/80 shadow-xs'
+                        ? 'border-amber-600 bg-amber-50/40 shadow-md ring-2 ring-amber-500/20'
+                        : 'border-slate-200 hover:border-amber-300 hover:bg-slate-50/60 shadow-xs'
                     }`}
                   >
                     <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded">
-                          {b.level}
+                      <div className="flex items-center justify-between mb-3">
+                        <div
+                          className={`w-8 h-8 rounded-lg bg-gradient-to-br ${book.coverGradient} shadow-xs flex items-center justify-center text-white font-bold text-xs`}
+                        >
+                          {book.title.slice(0, 1)}
+                        </div>
+                        <span
+                          className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
+                            book.levelKey === 'beginner'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : book.levelKey === 'intermediate'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-purple-100 text-purple-800'
+                          }`}
+                        >
+                          {book.level}
                         </span>
-                        {isSelected && (
-                          <span className="flex items-center space-x-1 text-xs font-bold text-emerald-600">
-                            <Check className="w-3.5 h-3.5" />
-                            <span>선택됨</span>
-                          </span>
-                        )}
                       </div>
-
-                      <h3 className="font-bold text-slate-900 text-sm group-hover:text-amber-900 transition">
-                        {b.title}
-                      </h3>
-                      <p className="text-xs font-medium text-slate-500 mt-0.5">{b.chapter}</p>
-                      <p className="text-xs text-slate-600 mt-2 line-clamp-2 leading-relaxed">
-                        {b.tagline}
+                      <h3 className="font-bold text-slate-800 text-base mb-1">{book.title}</h3>
+                      <p className="text-xs text-slate-500 mb-2 font-medium">
+                        {book.author} · {book.chapter}
+                      </p>
+                      <p className="text-xs text-slate-600 leading-relaxed mb-4 line-clamp-2">
+                        {book.tagline}
                       </p>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
-                      <span>{b.author}</span>
-                      <span className="text-amber-700 font-bold group-hover:translate-x-0.5 transition-transform flex items-center">
-                        독서 시작 &rarr;
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                      <span className="text-slate-400">
+                        {book.chapters?.length ? `${book.chapters.length}개 챕터 수록` : '단일 지문'}
+                      </span>
+                      <span
+                        className={`font-bold flex items-center ${
+                          isSelected ? 'text-amber-800' : 'text-slate-600'
+                        }`}
+                      >
+                        {isSelected ? '선택됨' : '선택하기'} →
                       </span>
                     </div>
                   </div>
@@ -616,91 +646,85 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
             </div>
           )}
 
-          {/* TAB 3: 사용자 직접 입력 (CUSTOM) */}
+          {/* TAB 3: Custom Text Direct Input */}
           {activeTab === 'custom' && (
             <form onSubmit={handleApplyCustom} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    원서 제목 (Title)
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    도서 제목 (Book Title)
                   </label>
                   <input
                     type="text"
                     value={customTitle}
                     onChange={(e) => setCustomTitle(e.target.value)}
-                    placeholder="예: The Little Prince"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-900 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition"
+                    placeholder="예: Harry Potter and the Sorcerer's Stone"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    챕터 / 장 (Chapter)
-                  </label>
-                  <input
-                    type="text"
-                    value={customChapter}
-                    onChange={(e) => setCustomChapter(e.target.value)}
-                    placeholder="예: Chapter 1: The Secret"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-900 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    저자 (Author)
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    작가명 (Author)
                   </label>
                   <input
                     type="text"
                     value={customAuthor}
                     onChange={(e) => setCustomAuthor(e.target.value)}
-                    placeholder="예: Antoine de Saint-Exupéry"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-900 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition"
+                    placeholder="예: J.K. Rowling"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    챕터 / 섹션명 (Chapter Title)
+                  </label>
+                  <input
+                    type="text"
+                    value={customChapter}
+                    onChange={(e) => setCustomChapter(e.target.value)}
+                    placeholder="예: Chapter 1: The Boy Who Lived"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    학습 난이도
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    학습 난이도 (Level)
                   </label>
                   <select
                     value={customLevel}
                     onChange={(e: any) => setCustomLevel(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-900 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                   >
-                    <option value="Beginner (A2)">Beginner (초급 A2)</option>
-                    <option value="Intermediate (B1-B2)">Intermediate (중급 B1-B2)</option>
-                    <option value="Upper-Intermediate (B2-C1)">Upper-Intermediate (고급 B2-C1)</option>
+                    <option value="Beginner (A2)">초급 (Beginner - A2)</option>
+                    <option value="Intermediate (B1-B2)">중급 (Intermediate - B1-B2)</option>
+                    <option value="Upper-Intermediate (B2-C1)">고급 (Upper-Intermediate - B2-C1)</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  영어 본문 내용 (Passage)
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  원서 본문 영문 텍스트 (English Passage) *
                 </label>
                 <textarea
-                  rows={8}
                   value={customPassage}
                   onChange={(e) => setCustomPassage(e.target.value)}
-                  placeholder="영어 원서의 본문을 붙여넣으세요..."
-                  className="w-full p-3.5 bg-slate-50 text-xs text-slate-900 rounded-xl border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition font-serif leading-relaxed"
+                  rows={8}
+                  placeholder="공부하고 싶은 영문 원서 본문을 여기에 복사하여 붙여넣으세요..."
+                  className="w-full p-3.5 bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-serif leading-relaxed"
+                  required
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-                >
-                  취소
-                </button>
+              <div className="flex justify-end pt-2">
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition shadow-xs"
+                  className="px-6 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
                 >
-                  본문 로드하여 학습 시작
+                  입력한 원서로 독서 시작하기
                 </button>
               </div>
             </form>
