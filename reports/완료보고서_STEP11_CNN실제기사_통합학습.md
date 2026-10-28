@@ -144,3 +144,11 @@
 - `data/local_books/books.sqlite3`: 안전 제외 확인
 - `.env*`, 개인 녹음 파일 및 백업 JSON: 안전 제외 확인
 - 동기화 스크립트 `scripts/safe-git-sync.ps1`을 통한 안전 배포 완료.
+
+## 8. Git 커밋 SHA 및 원격 저장소 동기화 상태
+
+- **동기화 스크립트**: `scripts/safe-git-sync.ps1`
+- **커밋 메시지**: `feat: complete STEP 11 (CNN real article integrated study system)`
+- **커밋 SHA**: `dfc007fd7691af176756a65febd4f5b9284472b3`
+- **원격 저장소**: `https://github.com/anbyku251029-cmd/English-Reading`
+- **보안 격리 상태**: `Book/`, `data/local_books/books.sqlite3`, `.env*` 100% 안전 제외 확인
