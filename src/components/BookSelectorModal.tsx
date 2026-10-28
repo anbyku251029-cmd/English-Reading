@@ -66,7 +66,13 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
       const res = await fetch('/api/books');
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `서버 오류 (${res.status})`);
+        if (res.status === 404) {
+          throw new Error('404_SERVER_UNREACHABLE');
+        } else if (res.status === 503 || errData?.error?.code === 'DATABASE_NOT_FOUND') {
+          throw new Error('503_DATABASE_NOT_FOUND');
+        } else {
+          throw new Error(errData?.error?.message || `서버 오류 (${res.status})`);
+        }
       }
       const data = await res.json();
       if (data.ok && Array.isArray(data.books)) {
@@ -227,12 +233,24 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
               <BookOpen className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900 flex flex-wrap items-center gap-2">
                 <span>원서 서재 &amp; 챕터 선택</span>
-                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60 flex items-center gap-1">
-                  <Database className="w-3 h-3" />
-                  SQLite 로컬 원서 28권 완비
-                </span>
+                {isLoadingBooks ? (
+                  <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    서버 연결 확인 중...
+                  </span>
+                ) : localBooks.length > 0 ? (
+                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60 flex items-center gap-1">
+                    <Database className="w-3 h-3" />
+                    로컬 서버 연결됨 (28권 완비)
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/60 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    로컬 서버 미연결 (Vercel 배포 모드)
+                  </span>
+                )}
               </h2>
               <p className="text-xs text-slate-500">
                 원하는 권과 챕터를 선택하면 전체 본문이 즉시 독서실로 로드됩니다.
@@ -330,17 +348,51 @@ export const BookSelectorModal: React.FC<BookSelectorModalProps> = ({
 
               {/* Error State */}
               {!isLoadingBooks && booksError && (
-                <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                  <div className="flex-1 text-xs">
-                    <p className="font-bold mb-1">도서 목록을 불러오지 못했습니다.</p>
-                    <p className="text-rose-600 mb-2">{booksError}</p>
-                    <button
-                      onClick={fetchLocalBooks}
-                      className="px-3 py-1 bg-rose-600 text-white rounded-lg font-bold hover:bg-rose-700 transition"
-                    >
-                      다시 시도
-                    </button>
+                <div className="p-5 rounded-2xl bg-amber-50/90 border border-amber-200 text-slate-800 space-y-3 mb-4">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 text-xs space-y-2">
+                      <p className="font-bold text-amber-900 text-sm">
+                        {booksError === '404_SERVER_UNREACHABLE' || booksError.includes('404')
+                          ? '로컬 원서 백엔드 서버 미연결 (HTTP 404)'
+                          : booksError === '503_DATABASE_NOT_FOUND'
+                          ? 'SQLite 도서 데이터베이스 파일 누락 (503)'
+                          : '도서 목록을 불러오지 못했습니다.'}
+                      </p>
+                      {booksError === '404_SERVER_UNREACHABLE' || booksError.includes('404') ? (
+                        <div className="text-slate-700 leading-relaxed space-y-2">
+                          <p>
+                            Magic Tree House 28권(총 300장, 14,963문단) 원서 데이터는 <strong>저작권 보호 및 보안 격리 규칙</strong>에 따라 Vercel 원격 저장소에 배포되지 않으며, 사용자 로컬 PC 환경에서만 제공됩니다.
+                          </p>
+                          <div className="p-3 rounded-xl bg-white/90 border border-amber-200 text-[11px] space-y-1.5">
+                            <p className="font-semibold text-amber-800">💡 학습 안내:</p>
+                            <p>• <strong>Vercel 배포 환경:</strong> 상단의 <strong>[추천 명작 원서]</strong> 탭 또는 <strong>[내 원서 텍스트 직접 입력]</strong>을 선택하시면 오프라인으로 읽기·듣기·말하기의 모든 기능을 즉시 이용하실 수 있습니다.</p>
+                            <p>• <strong>로컬 28권 전체 이용:</strong> 로컬 터미널에서 <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold">npm run dev</code> (또는 <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold">tsx server.ts</code>)를 실행 후 접속하시면 28권 전체가 정상 로드됩니다.</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-600">{booksError}</p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('presets')}
+                          className="px-3.5 py-1.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition flex items-center gap-1.5 shadow-xs"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>추천 명작 원서 둘러보기</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={fetchLocalBooks}
+                          disabled={isLoadingBooks}
+                          className="px-3.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition flex items-center gap-1"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isLoadingBooks ? 'animate-spin' : ''}`} />
+                          <span>다시 시도</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

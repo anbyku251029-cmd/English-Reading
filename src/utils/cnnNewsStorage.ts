@@ -236,7 +236,9 @@ export function loadNewsArticles(): CnnNewsArticle[] {
     const raw = localStorage.getItem(CNN_STORAGE_KEYS.ARTICLES);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    const list = Array.isArray(parsed) ? parsed : [];
+    const list = Array.isArray(parsed)
+      ? (parsed.filter((a): a is CnnNewsArticle => !!(a && typeof a === 'object' && typeof a.id === 'string')))
+      : [];
 
     // 저장소에 시드 기사가 있을 경우 STEP 11 필드 누락 보강
     const seedIdx = list.findIndex((a) => a.id === SEED_ARTICLE_LUNG_NODULES.id);
@@ -789,7 +791,9 @@ export function loadNewsStudyLogs(): CnnNewsStudyLog[] {
     const raw = localStorage.getItem(CNN_STORAGE_KEYS.LOGS);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? (parsed.filter((l): l is CnnNewsStudyLog => !!(l && typeof l === 'object' && typeof l.id === 'string')))
+      : [];
   } catch (e) {
     console.warn('Failed to parse cnn news logs from localStorage', e);
     return [];
@@ -922,7 +926,7 @@ export function loadAllGuidedProgress(): Record<string, GuidedCourseProgress> {
     const raw = localStorage.getItem(CNN_STORAGE_KEYS.GUIDED_PROGRESS);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch (e) {
     console.warn('Failed to parse cnn guided progress from localStorage', e);
     return {};

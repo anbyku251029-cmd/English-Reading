@@ -177,6 +177,15 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
     const text = article.paragraphs[index];
     if (!text) return;
 
+    if (!audioManager.isSpeechSupported()) {
+      alert('현재 브라우저 환경에서는 Web Speech 음성 합성(TTS)이 지원되지 않습니다.');
+      return;
+    }
+
+    const updated = { ...article, lastReadParagraphIndex: index };
+    updateNewsArticle(updated);
+    setArticle(updated);
+
     audioManager.stop();
     setIsPlayingAudio(true);
     setPlayingParagraphIndex(index);
@@ -200,6 +209,9 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
   const handleSelectSentenceForAnalysis = (sent: string, pIdx: number) => {
     setSelectedSentence(sent);
     setSelectedSentenceParagraphIdx(pIdx);
+    const updatedArt = { ...article, lastReadParagraphIndex: pIdx };
+    updateNewsArticle(updatedArt);
+    setArticle(updatedArt);
 
     const existingId = `sent-${pIdx}-${sent.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '')}`;
     const existing = article.sentenceAnalyses?.[existingId];
@@ -514,6 +526,11 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
                     <div className="flex items-center justify-between text-xs mb-3 font-sans border-b border-slate-700/50 pb-2">
                       <div className="flex items-center space-x-2">
                         <span className="font-mono font-bold text-red-500">¶ {pIdx + 1}</span>
+                        {article.lastReadParagraphIndex === pIdx && (
+                          <span className="text-[10px] bg-red-950/80 border border-red-800 text-red-300 px-1.5 py-0.5 rounded font-sans">
+                            마지막 읽은 위치
+                          </span>
+                        )}
                         <button
                           onClick={() => handlePlayParagraph(pIdx)}
                           className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition flex items-center space-x-1 ${

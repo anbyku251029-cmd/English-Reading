@@ -21,8 +21,6 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onExportNotes: () => void;
   savedExpressionsCount: number;
-  isChatOpen?: boolean;
-  onToggleChat?: () => void;
   onOpenDashboard?: () => void;
   onOpenBackupModal?: () => void;
   currentCategory?: 'books' | 'cnn_news';
@@ -30,10 +28,9 @@ interface HeaderProps {
 }
 
 const LEARNING_STEPS = [
-  { step: 1, label: '1. 핵심 표현', title: 'Step 1: 원서 분석 & 핵심 표현' },
-  { step: 2, label: '2. 낭독·섀도잉', title: 'Step 2: 낭독 & 섀도잉' },
-  { step: 3, label: '3. 회화 토론', title: 'Step 3: 스토리 회화 토론' },
-  { step: 4, label: '4. 나만의 문장', title: 'Step 4: 나만의 문장 만들기' },
+  { step: 1, label: '1. 읽기 (READ)', title: 'Step 1: 원문 정독 & 문단 탐색' },
+  { step: 2, label: '2. 듣기 (LISTEN)', title: 'Step 2: Web Speech 음성 듣기' },
+  { step: 3, label: '3. 말하기 (SPEAK)', title: 'Step 3: 발음 녹음 & 섀도잉' },
 ];
 
 export const Header: React.FC<HeaderProps> = ({
@@ -45,8 +42,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onExportNotes,
   savedExpressionsCount,
-  isChatOpen = true,
-  onToggleChat,
   onOpenDashboard,
   onOpenBackupModal,
   currentCategory = 'books',
@@ -83,11 +78,11 @@ export const Header: React.FC<HeaderProps> = ({
                       ? 'bg-red-900 text-red-200 border border-red-800'
                       : 'bg-amber-100 text-amber-800'
                   }`}>
-                    {isCnnNews ? 'C2 News' : 'AI Coach'}
+                    {isCnnNews ? 'C2 News' : 'Studio'}
                   </span>
                 </div>
                 <p className={`text-[11px] hidden sm:block ${isCnnNews ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {isCnnNews ? 'CNN 시사 뉴스 & C2 고급 영어 연구' : '영어 원서 직독직해 & 회화 코칭'}
+                  {isCnnNews ? 'CNN 시사 뉴스 & C2 고급 영어 연구' : '영어 원서 읽기·듣기·말하기 중심 학습'}
                 </p>
               </div>
             </div>
@@ -200,23 +195,6 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* Toggle AI Coach Chat (Books only) */}
-            {!isCnnNews && (
-              <button
-                type="button"
-                onClick={onToggleChat}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer border ${
-                  isChatOpen
-                    ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
-                    : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border-amber-200/80'
-                }`}
-                title={isChatOpen ? 'AI 코치 창 닫기' : 'AI 코치 창 열기'}
-              >
-                <Bot className="w-4 h-4" />
-                <span className="hidden sm:inline">AI 코치</span>
-                <span className={`w-2 h-2 rounded-full ${isChatOpen ? 'bg-emerald-300' : 'bg-emerald-500'}`} />
-              </button>
-            )}
 
             {/* Expression Notebook */}
             <button
@@ -287,7 +265,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="xl:hidden border-t border-amber-100/60 bg-amber-50/40 px-3 py-1.5 flex items-center justify-between overflow-x-auto scrollbar-none">
           <span className="text-[11px] font-bold text-amber-900 shrink-0 mr-2 flex items-center space-x-1">
             <Sparkles className="w-3 h-3 text-amber-600" />
-            <span>학습 4단계:</span>
+            <span>핵심 3단계:</span>
           </span>
           <div className="flex items-center space-x-1.5">
             {LEARNING_STEPS.map((s) => {

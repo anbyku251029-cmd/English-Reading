@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Volume2,
   Square,
@@ -9,14 +9,11 @@ import {
   Headphones,
   Check,
   Bookmark,
-  Share2,
   Sliders,
   Type,
   Copy,
-  ExternalLink,
   ArrowUpCircle,
   ArrowDownCircle,
-  Search,
   CheckCircle2,
   Circle,
   Pause,
@@ -24,6 +21,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
+  Mic,
+  MicOff,
+  Trash2,
+  RefreshCw,
+  AlertCircle,
+  FileText,
 } from 'lucide-react';
 import { BookPreset } from '../data/presetBooks';
 import { StudyPack, KeyExpression } from '../types';
@@ -39,13 +42,13 @@ interface VocabNoteItem {
 
 interface BookPassageViewProps {
   book: BookPreset;
-  studyPack: StudyPack | null;
-  isLoadingStudyPack: boolean;
-  onSelectShadowingSentence: (sentence: string) => void;
+  studyPack?: StudyPack | null;
+  isLoadingStudyPack?: boolean;
+  onSelectShadowingSentence?: (sentence: string) => void;
   onSaveExpression: (expr: KeyExpression) => void;
   savedExpressions: KeyExpression[];
   currentStep: number;
-  onSendChatPrompt: (prompt: string) => void;
+  onSetStep?: (step: number) => void;
   onSelectChapter?: (chapterNumber: number) => void;
   onNextChapter?: () => void;
   onPrevChapter?: () => void;
@@ -53,55 +56,46 @@ interface BookPassageViewProps {
   hasNextChapter?: boolean;
 }
 
+type CoreStudyTab = 'reading' | 'listening' | 'speaking';
+
 export const BookPassageView: React.FC<BookPassageViewProps> = ({
   book,
-  studyPack,
-  isLoadingStudyPack,
-  onSelectShadowingSentence,
   onSaveExpression,
   savedExpressions,
   currentStep,
-  onSendChatPrompt,
+  onSetStep,
   onSelectChapter,
   onNextChapter,
   onPrevChapter,
   hasPrevChapter,
   hasNextChapter,
 }) => {
-  const [activeTab, setActiveTab] = useState<'reading' | 'studypack' | 'shadowing'>('reading');
+  // 3대 핵심 학습 탭: 읽기(READ) • 듣기(LISTEN) • 말하기(SPEAK)
+  const [activeTab, setActiveTab] = useState<CoreStudyTab>('reading');
 
-  // Font size control with persistence
+  // Font size & line height control with persistence
   const [fontSize, setFontSize] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('booky_font_size');
-      return saved ? Number(saved) : 19;
+      return saved ? Number(saved) : 18;
     } catch {
-      return 19;
+      return 18;
     }
   });
 
   const changeFontSize = (newSize: number) => {
-    const clamped = Math.min(36, Math.max(14, newSize));
+    const clamped = Math.min(32, Math.max(14, newSize));
     setFontSize(clamped);
     try {
       localStorage.setItem('booky_font_size', String(clamped));
     } catch {}
   };
 
-  // Scroll Container Ref for Top / Bottom navigation
+  // Scroll Container Ref
   const readingScrollRef = useRef<HTMLDivElement | null>(null);
 
   const scrollToTop = () => {
     readingScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const scrollToBottom = () => {
-    if (readingScrollRef.current) {
-      readingScrollRef.current.scrollTo({
-        top: readingScrollRef.current.scrollHeight,
-        behavior: 'smooth',
-      });
-    }
   };
 
   // Web Speech API state
@@ -113,11 +107,10 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
   const [isPlayingAll, setIsPlayingAll] = useState<boolean>(false);
   const [currentReadingIndex, setCurrentReadingIndex] = useState<number | null>(null);
   const stopPlayAllRef = useRef<boolean>(false);
-  const isSpeakingGuardRef = useRef<boolean>(false);
-  const sentenceRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const sentenceRefs = useRef<(HTMLElement | null)[]>([]);
 
   // Split passage into sentences or use paragraphs
-  const sentences = React.useMemo(() => {
+  const sentences = useMemo(() => {
     if (book.paragraphs && book.paragraphs.length > 0) {
       return book.paragraphs.map((p) => p.content.trim()).filter(Boolean);
     }
@@ -127,7 +120,7 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
       .filter(Boolean);
   }, [book.passage, book.paragraphs]);
 
-  // Load available English voices with multiple fallback checks (asynchronous browser loading)
+  // Load English voices
   useEffect(() => {
     const updateVoices = () => {
       const voices = audioManager.getEnglishVoices();
@@ -162,7 +155,14 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
   // Selected Sentence for Study Tools
   const [selectedSentence, setSelectedSentence] = useState<string>('');
   const [selectedSentenceIndex, setSelectedSentenceIndex] = useState<number | null>(null);
+  const [targetSentence, setTargetSentence] = useState<string>('');
   const [copiedSuccess, setCopiedSuccess] = useState<boolean>(false);
+  const [saveToast, setSaveToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setSaveToast(msg);
+    setTimeout(() => setSaveToast(null), 2500);
+  };
 
   // Restore saved lastParagraphIndex on chapter load
   useEffect(() => {
@@ -174,19 +174,27 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
           progress.bookId === book.dbBookId &&
           progress.chapterId === book.dbChapterId &&
           typeof progress.lastParagraphIndex === 'number' &&
-          progress.lastParagraphIndex > 0 &&
+          progress.lastParagraphIndex >= 0 &&
           progress.lastParagraphIndex < sentences.length
         ) {
           const idx = progress.lastParagraphIndex;
           setSelectedSentenceIndex(idx);
           if (sentences[idx]) {
             setSelectedSentence(sentences[idx]);
+            setTargetSentence(sentences[idx]);
           }
-          // Scroll to saved position smoothly
           setTimeout(() => {
             sentenceRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }, 350);
+        } else if (sentences.length > 0) {
+          setSelectedSentenceIndex(0);
+          setSelectedSentence(sentences[0]);
+          setTargetSentence(sentences[0]);
         }
+      } else if (sentences.length > 0) {
+        setSelectedSentenceIndex(0);
+        setSelectedSentence(sentences[0]);
+        setTargetSentence(sentences[0]);
       }
     } catch {}
   }, [book.dbBookId, book.dbChapterId, sentences]);
@@ -206,85 +214,19 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     }
   };
 
-  // Vocabulary Notes (Local Scratchpad with Book & Chapter Origin)
-  const [vocabNotes, setVocabNotes] = useState<VocabNoteItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('booky_vocab_notes');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [newWord, setNewWord] = useState('');
-  const [newNote, setNewNote] = useState('');
-
-  const handleAddVocabNote = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newWord.trim()) return;
-    const item: VocabNoteItem = {
-      word: newWord.trim(),
-      note: newNote.trim(),
-      bookTitle: book.title,
-      chapterTitle: book.chapter,
-      savedAt: new Date().toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }),
-    };
-    const updated = [item, ...vocabNotes];
-    setVocabNotes(updated);
-    setNewWord('');
-    setNewNote('');
-    try {
-      localStorage.setItem('booky_vocab_notes', JSON.stringify(updated));
-    } catch {}
-  };
-
-  const handleRemoveVocabNote = (idx: number) => {
-    const updated = vocabNotes.filter((_, i) => i !== idx);
-    setVocabNotes(updated);
-    try {
-      localStorage.setItem('booky_vocab_notes', JSON.stringify(updated));
-    } catch {}
-  };
-
-  // Checklist state
-  const [checklist, setChecklist] = useState<Record<string, boolean>>(() => {
-    try {
-      const saved = localStorage.getItem('booky_reading_checklist');
-      return saved ? JSON.parse(saved) : { readAloud: false, pickExpr: false, shadowTwice: false };
-    } catch {
-      return { readAloud: false, pickExpr: false, shadowTwice: false };
-    }
-  });
-
-  const toggleChecklist = (key: string) => {
-    const next = { ...checklist, [key]: !checklist[key] };
-    setChecklist(next);
-    try {
-      localStorage.setItem('booky_reading_checklist', JSON.stringify(next));
-    } catch {}
-  };
-
-  // Target sentence for Shadowing
-  const [targetSentence, setTargetSentence] = useState<string>('');
-
-  // Sync tab with 4-step learning flow
+  // Tab synchronization with Header & App: 1 = reading, 2 = listening, 3 = speaking
   useEffect(() => {
-    if (currentStep === 2) {
-      setActiveTab('shadowing');
-    } else if (currentStep === 1) {
-      setActiveTab((prev) => (prev === 'shadowing' ? 'studypack' : prev));
-    }
+    if (currentStep === 1) setActiveTab('reading');
+    else if (currentStep === 2) setActiveTab('listening');
+    else if (currentStep === 3) setActiveTab('speaking');
   }, [currentStep]);
 
-  // Set default target sentence
-  useEffect(() => {
-    if (studyPack?.shadowingSentences?.[0]?.sentence) {
-      setTargetSentence(studyPack.shadowingSentences[0].sentence);
-      if (!selectedSentence) setSelectedSentence(studyPack.shadowingSentences[0].sentence);
-    } else if (sentences[0]) {
-      setTargetSentence(sentences[0]);
-      if (!selectedSentence) setSelectedSentence(sentences[0]);
-    }
-  }, [studyPack, sentences, selectedSentence]);
+  const handleTabChange = (tab: CoreStudyTab) => {
+    setActiveTab(tab);
+    if (tab === 'reading') onSetStep?.(1);
+    else if (tab === 'listening') onSetStep?.(2);
+    else if (tab === 'speaking') onSetStep?.(3);
+  };
 
   // Automatically scroll currently read sentence into view
   useEffect(() => {
@@ -298,55 +240,45 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
 
   // Hard stop speech when chapter or book changes
   useEffect(() => {
-    stopPlayAllRef.current = true;
-    isSpeakingGuardRef.current = false;
-    setIsPlayingAll(false);
-    setIsSpeechPaused(false);
-    audioManager.stop();
-    setPlayingSentence(null);
-    setCurrentReadingIndex(null);
-  }, [book.passage, book.currentChapterNumber, book.dbChapterId]);
+    handleStopSpeech();
+  }, [book.id, book.chapter]);
 
-  // Web Speech: Play single sentence with race-condition guard
+  // Web Speech Actions
   const handlePlaySentence = async (text: string) => {
-    if (isSpeakingGuardRef.current) {
-      audioManager.stop();
+    if (!text.trim()) return;
+    if (!audioManager.isSpeechSupported()) {
+      alert('현재 브라우저 환경에서는 Web Speech 음성 합성이 지원되지 않습니다.');
+      return;
     }
-    isSpeakingGuardRef.current = true;
+    handleStopSpeech();
     setPlayingSentence(text);
-    setIsSpeechPaused(false);
     try {
       await audioManager.speakSentence(text, speechRate, selectedVoiceName);
+    } catch (err) {
+      console.warn('Speech error:', err);
     } finally {
       setPlayingSentence(null);
-      isSpeakingGuardRef.current = false;
     }
   };
 
-  // Web Speech: Play all sentences sequentially
-  const handlePlayAll = async (startIndex: number = 0) => {
-    if (isPlayingAll && startIndex === 0) {
-      stopPlayAllRef.current = true;
-      setIsPlayingAll(false);
-      setIsSpeechPaused(false);
-      audioManager.stop();
-      setPlayingSentence(null);
-      setCurrentReadingIndex(null);
+  const handlePlayAll = async () => {
+    if (isPlayingAll) return;
+    if (!audioManager.isSpeechSupported()) {
+      alert('현재 브라우저 환경에서는 Web Speech 음성 합성이 지원되지 않습니다.');
       return;
     }
-
-    stopPlayAllRef.current = true;
-    audioManager.stop();
-    await new Promise((r) => setTimeout(r, 80));
-
+    stopPlayAllRef.current = false;
     setIsPlayingAll(true);
     setIsSpeechPaused(false);
-    stopPlayAllRef.current = false;
 
+    const startIndex = selectedSentenceIndex !== null ? selectedSentenceIndex : 0;
     for (let i = startIndex; i < sentences.length; i++) {
       if (stopPlayAllRef.current) break;
       const s = sentences[i];
       setCurrentReadingIndex(i);
+      setSelectedSentenceIndex(i);
+      setSelectedSentence(s);
+      setTargetSentence(s);
       setPlayingSentence(s);
       saveReadingPosition(i);
 
@@ -391,30 +323,135 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
       await navigator.clipboard.writeText(text);
       setCopiedSuccess(true);
       setTimeout(() => setCopiedSuccess(false), 2000);
+      showToast('문장이 클립보드에 복사되었습니다.');
     } catch {}
   };
 
   // Quick save expression from selected sentence
-  const handleSaveSelectedAsExpression = () => {
-    if (!selectedSentence) return;
-    const clean = selectedSentence.slice(0, 60);
+  const handleSaveSelectedAsExpression = (text: string) => {
+    if (!text) return;
+    const clean = text.slice(0, 60);
     const expr: KeyExpression = {
       expression: clean,
-      inContext: selectedSentence,
+      inContext: text,
       everydayMeaning: `[${book.title} Ch.${book.currentChapterNumber || ''}] 직접 스크랩한 표현`,
       dailyExample: clean,
       dailyExampleMeaning: '내가 저장한 원서 표현 예문',
     };
     onSaveExpression(expr);
+    showToast(`단어장에 저장되었습니다: "${clean.slice(0, 25)}..."`);
   };
 
-  const wordCount = selectedSentence
-    ? selectedSentence.trim().split(/\s+/).filter(Boolean).length
-    : 0;
-  const charCount = selectedSentence ? selectedSentence.length : 0;
+  // =========================================================================
+  // 3. 말하기 (SPEAK) — MediaRecorder 발음 녹음 & 섀도잉
+  // =========================================================================
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [recordingSeconds, setRecordingSeconds] = useState<number>(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<any>(null);
 
-  const isExprSaved = (expr: string) => {
-    return savedExpressions.some((e) => e.expression.toLowerCase() === expr.toLowerCase());
+  const startRecording = async () => {
+    setMicError(null);
+    if (recordedAudioUrl) {
+      try {
+        URL.revokeObjectURL(recordedAudioUrl);
+      } catch {}
+      setRecordedAudioUrl(null);
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(audioBlob);
+        setRecordedAudioUrl(url);
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn('Microphone access error:', err);
+      setMicError('마이크 장치에 접근할 수 없습니다. 브라우저 주소창 설정에서 마이크 권한을 허용해 주시거나, 대체 낭독 연습(소리 내어 3회 읽기)을 진행해 주세요.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const deleteRecording = () => {
+    if (recordedAudioUrl) {
+      try {
+        URL.revokeObjectURL(recordedAudioUrl);
+      } catch {}
+      setRecordedAudioUrl(null);
+      showToast('녹음이 삭제되었습니다.');
+    }
+  };
+
+  // Cleanup media resources on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (recordedAudioUrl) {
+        try {
+          URL.revokeObjectURL(recordedAudioUrl);
+        } catch {}
+      }
+    };
+  }, [recordedAudioUrl]);
+
+  // Navigate paragraphs
+  const handleSelectParagraph = (idx: number) => {
+    if (idx < 0 || idx >= sentences.length) return;
+    setSelectedSentenceIndex(idx);
+    setSelectedSentence(sentences[idx]);
+    setTargetSentence(sentences[idx]);
+    saveReadingPosition(idx);
+    sentenceRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const handleNextParagraph = () => {
+    const cur = selectedSentenceIndex !== null ? selectedSentenceIndex : 0;
+    if (cur < sentences.length - 1) {
+      handleSelectParagraph(cur + 1);
+    }
+  };
+
+  const handlePrevParagraph = () => {
+    const cur = selectedSentenceIndex !== null ? selectedSentenceIndex : 0;
+    if (cur > 0) {
+      handleSelectParagraph(cur - 1);
+    }
   };
 
   const isPrologue =
@@ -424,14 +461,14 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
     : `Chapter ${book.currentChapterNumber || 1}`;
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/50 border-r border-slate-200">
-      {/* Top Header & Tab selector */}
+    <div className="flex flex-col h-full bg-slate-50/50">
+      {/* 1. Header & 3-Mode Tab Selector */}
       <div className="bg-white border-b border-slate-200 px-4 py-3 shrink-0">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
           <div className="flex items-center space-x-2">
             <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
             <h2 className="text-sm font-bold text-slate-800 tracking-tight">
-              원서 독서실 &amp; 학습 보조기
+              원서 학습 스튜디오 (읽기 • 듣기 • 말하기)
             </h2>
             {book.dbBookId && (
               <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full border border-amber-300/60">
@@ -448,19 +485,17 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                 onClick={() => changeFontSize(fontSize - 2)}
                 disabled={fontSize <= 14}
                 className="px-2 py-0.5 rounded text-xs font-extrabold text-slate-700 hover:bg-white disabled:opacity-30 transition cursor-pointer"
-                title="글씨 작게 (A-)"
+                title="글자 축소"
               >
                 A-
               </button>
-              <span className="text-xs font-bold text-amber-900 font-mono px-1 min-w-[32px] text-center">
-                {fontSize}px
-              </span>
+              <span className="px-1 text-[11px] font-mono text-slate-600 font-semibold">{fontSize}</span>
               <button
                 type="button"
                 onClick={() => changeFontSize(fontSize + 2)}
-                disabled={fontSize >= 34}
+                disabled={fontSize >= 32}
                 className="px-2 py-0.5 rounded text-xs font-extrabold text-slate-700 hover:bg-white disabled:opacity-30 transition cursor-pointer"
-                title="글씨 크게 (A+)"
+                title="글자 확대"
               >
                 A+
               </button>
@@ -468,335 +503,323 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+        {/* 3대 핵심 학습 탭 (READ • LISTEN • SPEAK) */}
+        <div className="flex rounded-xl bg-slate-100 p-1 space-x-1 text-xs font-bold">
           <button
-            onClick={() => setActiveTab('reading')}
-            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer ${
+            onClick={() => handleTabChange('reading')}
+            className={`flex-1 py-2 rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer ${
               activeTab === 'reading'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-amber-500 text-white shadow-xs font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
-            <BookOpen className="w-3.5 h-3.5 text-amber-600" />
-            <span>원서 읽기 ({sentences.length})</span>
+            <BookOpen className="w-4 h-4" />
+            <span>1. 읽기 (READ)</span>
+            <span className="text-[10px] opacity-80">({sentences.length}문단)</span>
           </button>
           <button
-            onClick={() => setActiveTab('studypack')}
-            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer ${
-              activeTab === 'studypack'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+            onClick={() => handleTabChange('listening')}
+            className={`flex-1 py-2 rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer ${
+              activeTab === 'listening'
+                ? 'bg-amber-500 text-white shadow-xs font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>표현 &amp; 학습도구</span>
+            <Volume2 className="w-4 h-4" />
+            <span>2. 듣기 (LISTEN)</span>
           </button>
           <button
-            onClick={() => setActiveTab('shadowing')}
-            className={`flex-1 py-1.5 rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer ${
-              activeTab === 'shadowing'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+            onClick={() => handleTabChange('speaking')}
+            className={`flex-1 py-2 rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer ${
+              activeTab === 'speaking'
+                ? 'bg-amber-500 text-white shadow-xs font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
-            <Headphones className="w-3.5 h-3.5 text-amber-600" />
-            <span>낭독 &amp; 섀도잉</span>
+            <Mic className="w-4 h-4" />
+            <span>3. 말하기 (SPEAK)</span>
           </button>
         </div>
       </div>
 
-      {/* Main Tab Content Area */}
-      <div ref={readingScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-5">
-        {/* Tab 1: Book Passage Reading */}
-        {activeTab === 'reading' && (
-          <div className="max-w-2xl mx-auto space-y-4">
-            {/* Transparent Offline Notice Badge (Step 06-E) */}
-            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 flex items-start gap-2.5 text-xs text-amber-950">
-              <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-              <div className="leading-relaxed">
-                <span className="font-bold text-amber-900 mr-1">[로컬 독서 모드]</span>
-                외부 AI API 연결 없이, 로컬 SQLite 데이터베이스와 브라우저 내장 음성 합성(Web
-                Speech API)으로 안전하고 빠르게 구동됩니다.
+      {/* 2. Main Tab Content Area */}
+      <div ref={readingScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="max-w-3xl mx-auto space-y-5">
+          {/* Transparent Local Notice Banner */}
+          <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex items-start gap-2.5 text-xs text-amber-950">
+            <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <div className="leading-relaxed">
+              <span className="font-bold text-amber-900 mr-1">[로컬 전용 무결점 학습 모드]</span>
+              외부 AI API(Gemini, OpenAI 등) 연결 없이 브라우저 내장 Web Speech API와 안전한 로컬 저장소를 통해 빠르고 사생활 침해 없이 학습합니다.
+            </div>
+          </div>
+
+          {/* Book Metadata & Chapter Switcher Card */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-md border border-amber-200/60">
+                {book.series ? `${book.series} #${book.bookNumber || ''}` : book.level}
+              </span>
+              <span className="text-xs text-slate-400">{book.author}</span>
+            </div>
+
+            <div>
+              <h3 className="font-bold text-slate-900 text-base sm:text-lg">{book.title}</h3>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-amber-900 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">
+                  {chapterDisplayLabel}
+                </span>
+                <span className="text-xs text-slate-600 font-semibold truncate">
+                  {book.chapter.replace(/^\d+\.\s*/, '')}
+                </span>
               </div>
             </div>
 
-            {/* Book Metadata & Chapter Switcher Card */}
-            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/50">
-                  {book.series ? `${book.series} #${book.bookNumber || ''}` : book.level}
-                </span>
-                <span className="text-xs text-slate-400">{book.author}</span>
-              </div>
-
-              <div>
-                <h3 className="font-bold text-slate-900 text-base sm:text-lg">{book.title}</h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-amber-900 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">
-                    {chapterDisplayLabel}
-                  </span>
-                  <span className="text-xs text-slate-600 font-semibold truncate">
-                    {book.chapter.replace(/^\d+\.\s*/, '')}
-                  </span>
-                </div>
-              </div>
-
-              {/* Prev / Next Chapter Navigation Buttons (Step 06-D) */}
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+            {/* Quick Paragraph Navigation & Position Info */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span className="font-medium">
+                현재 위치: <strong className="text-amber-800">¶ {(selectedSentenceIndex !== null ? selectedSentenceIndex : 0) + 1}</strong> / {sentences.length} 문단
+              </span>
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={onPrevChapter}
-                  disabled={!hasPrevChapter}
-                  className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
-                  title="이전 챕터로 이동"
+                  onClick={handlePrevParagraph}
+                  disabled={selectedSentenceIndex === 0}
+                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition"
                 >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                  <span>이전 장</span>
+                  이전 문단
                 </button>
-
-                <span className="text-[11px] font-semibold text-slate-500">
-                  총 {sentences.length}개 {book.paragraphs ? '문단' : '문장'}
-                </span>
-
                 <button
                   type="button"
-                  onClick={onNextChapter}
-                  disabled={!hasNextChapter}
-                  className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
-                  title="다음 챕터로 이동"
+                  onClick={handleNextParagraph}
+                  disabled={selectedSentenceIndex === sentences.length - 1}
+                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition"
                 >
-                  <span>다음 장</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
+                  다음 문단
                 </button>
               </div>
+            </div>
+          </div>
 
-              {/* Web Speech Audio Controller & Navigation Bar */}
-              <div className="pt-3 border-t border-slate-100 space-y-2.5">
-                {/* Voice & Speed Controls */}
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-semibold text-slate-500">영어 음성:</span>
-                    {availableVoices.length > 0 ? (
-                      <select
-                        value={selectedVoiceName}
-                        onChange={(e) => setSelectedVoiceName(e.target.value)}
-                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500 max-w-[170px] truncate"
-                      >
-                        {availableVoices.map((v) => (
-                          <option key={v.name} value={v.name}>
-                            {v.name.replace(/(Microsoft|Google|Apple)\s*/i, '')} ({v.lang})
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-[11px] text-slate-400">브라우저 기본 음성</span>
-                    )}
-                  </div>
+          {/* ================================================================= */}
+          {/* TAB 1: 읽기 — READ                                                */}
+          {/* ================================================================= */}
+          {activeTab === 'reading' && (
+            <div className="space-y-4">
+              <div className="space-y-3 font-serif">
+                {sentences.map((sentence, idx) => {
+                  const isCurrent = currentReadingIndex === idx;
+                  const isSelected = selectedSentenceIndex === idx;
 
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-semibold text-slate-500">속도:</span>
-                    <div className="flex items-center gap-0.5 bg-white border border-slate-200 rounded-lg p-0.5">
-                      {[0.8, 0.92, 1.0, 1.2].map((rate) => (
-                        <button
-                          key={rate}
-                          type="button"
-                          onClick={() => setSpeechRate(rate)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
-                            speechRate === rate
-                              ? 'bg-amber-500 text-white'
-                              : 'text-slate-600 hover:bg-slate-100'
-                          }`}
-                        >
-                          {rate}x
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Playback Actions & Quick Navigation */}
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center space-x-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handlePlayAll(0)}
-                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition cursor-pointer shadow-xs ${
-                        isPlayingAll && !isSpeechPaused
-                          ? 'bg-amber-600 text-white animate-pulse'
-                          : 'bg-amber-500 hover:bg-amber-600 text-white'
+                  return (
+                    <article
+                      key={idx}
+                      ref={(el) => {
+                        sentenceRefs.current[idx] = el;
+                      }}
+                      onClick={() => handleSelectParagraph(idx)}
+                      className={`p-4 sm:p-5 rounded-2xl transition-all duration-200 cursor-pointer border ${
+                        isSelected
+                          ? 'bg-amber-50/90 border-amber-400 ring-2 ring-amber-300/60 shadow-sm'
+                          : isCurrent
+                          ? 'bg-amber-100/95 border-amber-500 ring-2 ring-amber-400 shadow-sm'
+                          : 'bg-white hover:bg-slate-50/80 border-slate-200/80 hover:border-amber-200'
                       }`}
-                      title="선택된 장 처음부터 전체 듣기"
                     >
-                      <Volume2 className="w-3.5 h-3.5" />
-                      <span>{isPlayingAll ? '재생 중' : '전체 낭독'}</span>
-                    </button>
+                      <div className="flex items-center justify-between text-xs text-slate-400 mb-2 font-sans select-none">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded text-[11px]">
+                            ¶ {idx + 1}
+                          </span>
+                          {isSelected && (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                              현재 읽는 위치
+                            </span>
+                          )}
+                        </div>
 
-                    {isPlayingAll && (
-                      <>
-                        {isSpeechPaused ? (
+                        <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={handleResumeSpeech}
-                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition"
-                            title="이어듣기"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePlaySentence(sentence);
+                            }}
+                            className="px-2 py-1 rounded bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-800 text-[11px] font-semibold flex items-center gap-1 transition"
+                            title="이 문단 음성 듣기"
                           >
-                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <Volume2 className="w-3.5 h-3.5 text-amber-600" />
+                            <span>듣기</span>
                           </button>
-                        ) : (
                           <button
                             type="button"
-                            onClick={handlePauseSpeech}
-                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition"
-                            title="일시정지"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectParagraph(idx);
+                              handleTabChange('speaking');
+                            }}
+                            className="px-2 py-1 rounded bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-800 text-[11px] font-semibold flex items-center gap-1 transition"
+                            title="이 문단 따라 말하기 스튜디오로 이동"
                           >
-                            <Pause className="w-3.5 h-3.5 fill-current" />
+                            <Mic className="w-3.5 h-3.5 text-amber-600" />
+                            <span>말하기</span>
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={handleStopSpeech}
-                          className="p-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl transition"
-                          title="낭독 정지"
-                        >
-                          <Square className="w-3.5 h-3.5 fill-current" />
-                        </button>
-                      </>
-                    )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSaveSelectedAsExpression(sentence);
+                            }}
+                            className="p-1 rounded text-slate-400 hover:text-amber-700 hover:bg-amber-50"
+                            title="단어장에 표현 저장"
+                          >
+                            <Bookmark className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
 
-                    {isPlayingAll && currentReadingIndex !== null && (
-                      <span className="text-[11px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-full">
-                        {currentReadingIndex + 1}/{sentences.length}
-                      </span>
-                    )}
-                  </div>
+                      <p
+                        style={{ fontSize: `${fontSize}px`, lineHeight: 1.8 }}
+                        className="text-slate-800 cursor-text select-text tracking-normal"
+                      >
+                        {sentence}
+                      </p>
+                    </article>
+                  );
+                })}
+              </div>
 
-                  {/* Scroll to Top / Bottom Buttons */}
-                  <div className="flex items-center space-x-1">
-                    <button
-                      type="button"
-                      onClick={scrollToTop}
-                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
-                      title="장의 처음으로 이동"
-                    >
-                      <ArrowUpCircle className="w-3.5 h-3.5" />
-                      <span>처음으로</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={scrollToBottom}
-                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
-                      title="장의 끝으로 이동"
-                    >
-                      <ArrowDownCircle className="w-3.5 h-3.5" />
-                      <span>끝으로</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 pt-0.5">
-                  <Info className="w-3 h-3 text-slate-400 shrink-0" />
-                  <span>
-                    브라우저 Web Speech API로 오프라인 구동됩니다. 기기별로 지원 음성이 다를 수 있습니다.
-                  </span>
-                </div>
+              {/* Step Navigation to Listen */}
+              <div className="p-4 bg-white rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
+                <span className="text-slate-500 font-medium">
+                  원문을 다 읽으셨나요? 원어민 발음으로 본문을 청취해 보세요.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('listening')}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <span>2단계: 음성 듣기로 이동</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
             </div>
+          )}
 
-            {/* Selected Sentence Inspector Box */}
-            {selectedSentence && (
-              <div className="p-3.5 rounded-2xl bg-white border border-amber-300 shadow-sm space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-amber-800 flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                      선택한 문장 도구
-                    </span>
-                    <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">
-                      {wordCount}단어 ({charCount}자)
-                    </span>
-                    {selectedSentenceIndex !== null && (
-                      <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded font-bold">
-                        위치 저장됨
-                      </span>
-                    )}
+          {/* ================================================================= */}
+          {/* TAB 2: 듣기 — LISTEN                                              */}
+          {/* ================================================================= */}
+          {activeTab === 'listening' && (
+            <div className="space-y-4">
+              {/* Audio Player Control Bar */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <Volume2 className="w-4 h-4 text-amber-600" />
+                      <span>Web Speech 오디오 플레이어</span>
+                    </h4>
+                    <p className="text-[11px] text-amber-700/90 mt-0.5">
+                      ※ 본 음성은 브라우저 내장 합성 음성(TTS)이며, 외부 서버 연결 없이 로컬에서 즉시 합성됩니다.
+                    </p>
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  {/* Speech Rate Controls */}
+                  <div className="flex items-center gap-1 text-xs">
+                    <span className="text-slate-400 text-[11px] mr-1">배속:</span>
+                    {[0.8, 0.9, 1.0, 1.2].map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setSpeechRate(r)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold border transition ${
+                          speechRate === r
+                            ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                            : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                        }`}
+                      >
+                        {r}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Voice Selection */}
+                {availableVoices.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500 font-semibold shrink-0">음성 선택:</span>
+                    <select
+                      value={selectedVoiceName}
+                      onChange={(e) => setSelectedVoiceName(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 text-xs w-full max-w-sm focus:outline-none focus:border-amber-500"
+                    >
+                      {availableVoices.map((v) => (
+                        <option key={v.name} value={v.name}>
+                          {v.name} ({v.lang})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Playback Action Buttons */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {!isPlayingAll ? (
+                    <button
+                      type="button"
+                      onClick={handlePlayAll}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-xs"
+                    >
+                      <Play className="w-4 h-4 fill-white" />
+                      <span>현재 문단부터 전체 낭독</span>
+                    </button>
+                  ) : (
+                    <>
+                      {!isSpeechPaused ? (
+                        <button
+                          type="button"
+                          onClick={handlePauseSpeech}
+                          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2"
+                        >
+                          <Pause className="w-4 h-4" />
+                          <span>일시 정지</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleResumeSpeech}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2"
+                        >
+                          <Play className="w-4 h-4 fill-white" />
+                          <span>계속 듣기</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleStopSpeech}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-2"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-white" />
+                        <span>낭독 정지</span>
+                      </button>
+                    </>
+                  )}
+
+                  {selectedSentence && (
                     <button
                       type="button"
                       onClick={() => handlePlaySentence(selectedSentence)}
-                      className="px-2 py-1 text-[11px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg flex items-center gap-1 transition"
-                      title="이 문장 듣기"
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5"
                     >
-                      <Volume2 className="w-3 h-3" />
-                      <span>듣기</span>
+                      <Volume2 className="w-3.5 h-3.5" />
+                      <span>현재 선택 문단만 듣기</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCopySentence(selectedSentence)}
-                      className="px-2 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition"
-                      title="클립보드에 복사"
-                    >
-                      {copiedSuccess ? (
-                        <>
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          <span className="text-emerald-700">복사됨!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          <span>복사</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveSelectedAsExpression}
-                      className="px-2 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition"
-                      title="표현 노트에 저장"
-                    >
-                      <Bookmark className="w-3 h-3" />
-                      <span>노트저장</span>
-                    </button>
-                    <a
-                      href={`https://en.dict.naver.com/#/search?query=${encodeURIComponent(
-                        selectedSentence.replace(/[“”.?!]/g, '').split(' ')[0] || ''
-                      )}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition"
-                      title="사전에서 단어 검색"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      <span>사전</span>
-                    </a>
-                  </div>
+                  )}
                 </div>
-
-                <p className="font-serif-book text-xs text-slate-800 bg-amber-50/40 p-2.5 rounded-xl border border-amber-100 leading-relaxed">
-                  "{selectedSentence}"
-                </p>
-              </div>
-            )}
-
-            {/* Reading Text Body */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-              <div className="px-4 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-xs">
-                <span className="font-bold text-slate-700 flex items-center space-x-1.5">
-                  <BookOpen className="w-3.5 h-3.5 text-amber-600" />
-                  <span>
-                    {chapterDisplayLabel} 본문 ({sentences.length}개 {book.paragraphs ? '문단' : '문장'})
-                  </span>
-                </span>
-                <span className="text-[11px] text-slate-400">문장을 클릭하면 위치가 자동 저장됩니다.</span>
               </div>
 
-              {/* Text Body */}
-              <div
-                className="p-6 font-serif-book text-slate-800 space-y-4"
-                style={{ fontSize: `${fontSize}px`, lineHeight: 1.85 }}
-              >
+              {/* Paragraphs in Listening Mode */}
+              <div className="space-y-3 font-serif">
                 {sentences.map((sentence, idx) => {
                   const isCurrent = currentReadingIndex === idx;
                   const isSelected = selectedSentenceIndex === idx;
@@ -807,310 +830,269 @@ export const BookPassageView: React.FC<BookPassageViewProps> = ({
                       ref={(el) => {
                         sentenceRefs.current[idx] = el;
                       }}
-                      onClick={() => {
-                        setSelectedSentence(sentence);
-                        setSelectedSentenceIndex(idx);
-                        setTargetSentence(sentence);
-                        saveReadingPosition(idx);
-                      }}
-                      className={`p-3.5 rounded-2xl transition-all duration-200 cursor-pointer border ${
+                      onClick={() => handleSelectParagraph(idx)}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer ${
                         isCurrent
-                          ? 'bg-amber-100/95 border-amber-500 shadow-md ring-2 ring-amber-400/80 font-semibold'
+                          ? 'bg-amber-100/95 border-amber-500 shadow-md ring-2 ring-amber-400 font-semibold'
                           : isSelected
-                          ? 'bg-amber-50/70 border-amber-300 ring-1 ring-amber-300/60'
-                          : 'bg-white hover:bg-slate-50/80 border-slate-200/60 hover:border-amber-200'
+                          ? 'bg-amber-50/80 border-amber-300'
+                          : 'bg-white border-slate-200/80 hover:border-slate-300'
                       }`}
-                      title="클릭하여 학습 위치 저장 및 낭독 지정"
                     >
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1 select-none">
-                        <span className="font-mono font-bold text-amber-800/80">
-                          {book.paragraphs ? `¶ ${idx + 1}` : `#${idx + 1}`}
-                        </span>
-
-                        <div className="flex items-center gap-2">
-                          {isCurrent && (
-                            <span className="font-bold text-amber-800 flex items-center gap-1">
-                              <Volume2 className="w-3 h-3 animate-bounce" />
-                              낭독 중
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handlePlaySentence(sentence);
-                            }}
-                            className="p-1 hover:text-amber-700 hover:bg-amber-100 rounded"
-                            title="이 부분만 듣기"
-                          >
-                            <Volume2 className="w-3 h-3" />
-                          </button>
-                        </div>
+                      <div className="flex items-center justify-between text-xs text-slate-400 mb-1 font-sans">
+                        <span className="font-mono font-bold text-amber-800">¶ {idx + 1}</span>
+                        {isCurrent && (
+                          <span className="font-bold text-amber-800 flex items-center gap-1 animate-pulse">
+                            <Volume2 className="w-3.5 h-3.5" />
+                            낭독 재생 중...
+                          </span>
+                        )}
                       </div>
-
-                      <p className="cursor-text select-text leading-relaxed">{sentence}</p>
+                      <p style={{ fontSize: `${fontSize}px`, lineHeight: 1.7 }} className="text-slate-800">
+                        {sentence}
+                      </p>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Bottom Chapter Switcher */}
-              <div className="p-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between">
+              {/* Step Navigation to Speak */}
+              <div className="p-4 bg-white rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
                 <button
                   type="button"
-                  onClick={() => {
-                    onPrevChapter?.();
-                    scrollToTop();
-                  }}
-                  disabled={!hasPrevChapter}
-                  className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
+                  onClick={() => handleTabChange('reading')}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition flex items-center gap-1"
                 >
                   <ChevronLeft className="w-4 h-4" />
-                  <span>이전 챕터로</span>
+                  <span>1단계: 읽기로</span>
                 </button>
-
                 <button
                   type="button"
-                  onClick={scrollToTop}
-                  className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
+                  onClick={() => handleTabChange('speaking')}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold transition flex items-center gap-1.5 shadow-xs"
                 >
-                  <ArrowUpCircle className="w-4 h-4" />
-                  <span>맨 위로</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    onNextChapter?.();
-                    scrollToTop();
-                  }}
-                  disabled={!hasNextChapter}
-                  className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-amber-50 hover:text-amber-900 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition"
-                >
-                  <span>다음 챕터로</span>
+                  <span>3단계: 말하기로 이동</span>
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Tab 2: Structured Study Pack & Offline Learning Aids */}
-        {activeTab === 'studypack' && (
-          <div className="max-w-2xl mx-auto space-y-5">
-            {/* Offline Learning Checklist (Step 06-D) */}
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>오늘의 원서 완독 체크리스트 (로컬 브라우저)</span>
-                </h3>
-                <span className="text-[10px] text-slate-400">규칙 기반 오프라인 학습</span>
-              </div>
-
-              <div className="space-y-2">
-                {[
-                  {
-                    key: 'readAloud',
-                    label: '본문 소리 내어 1회 완독하기 (Web Speech 듣고 따라하기)',
-                  },
-                  {
-                    key: 'pickExpr',
-                    label: '마음에 드는 핵심 표현 1개 이상 단어장에 저장하기',
-                  },
-                  {
-                    key: 'shadowTwice',
-                    label: '섀도잉 스튜디오에서 목표 문장 2회 이상 소리 내어 연습하기',
-                  },
-                ].map((item) => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => toggleChecklist(item.key)}
-                    className={`w-full p-3 rounded-xl border text-left text-xs font-medium transition flex items-center justify-between cursor-pointer ${
-                      checklist[item.key]
-                        ? 'bg-emerald-50/60 border-emerald-300 text-emerald-900'
-                        : 'bg-slate-50 border-slate-200/80 text-slate-700 hover:bg-slate-100/70'
-                    }`}
-                  >
-                    <span>{item.label}</span>
-                    {checklist[item.key] ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    ) : (
-                      <Circle className="w-4 h-4 text-slate-400 shrink-0" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Quick Vocabulary Scratchpad with Origin (Step 06-D) */}
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Bookmark className="w-4 h-4 text-amber-600" />
-                  <span>내 단어 &amp; 표현 메모장 ({vocabNotes.length}개)</span>
-                </h3>
-                <span className="text-[10px] text-slate-400">책·챕터 출처 자동 기록</span>
-              </div>
-
-              <form onSubmit={handleAddVocabNote} className="flex gap-2">
-                <input
-                  type="text"
-                  value={newWord}
-                  onChange={(e) => setNewWord(e.target.value)}
-                  placeholder="영어 단어/표현 (예: oak tree)"
-                  className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-                <input
-                  type="text"
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="뜻/메모 (예: 떡갈나무)"
-                  className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-                <button
-                  type="submit"
-                  className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition shrink-0"
-                >
-                  추가
-                </button>
-              </form>
-
-              {vocabNotes.length > 0 && (
-                <div className="divide-y divide-slate-100 border-t border-slate-100 pt-2 max-h-56 overflow-y-auto space-y-1">
-                  {vocabNotes.map((v, i) => (
-                    <div key={i} className="py-2 flex items-center justify-between text-xs">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900">{v.word}</span>
-                          <span className="text-slate-600">{v.note}</span>
-                        </div>
-                        {v.bookTitle && (
-                          <div className="text-[10px] text-amber-800/80 mt-0.5">
-                            📚 {v.bookTitle} — {v.chapterTitle}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveVocabNote(i)}
-                        className="text-slate-400 hover:text-rose-600 p-1"
-                        title="삭제"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+          {/* ================================================================= */}
+          {/* TAB 3: 말하기 — SPEAK                                             */}
+          {/* ================================================================= */}
+          {activeTab === 'speaking' && (
+            <div className="space-y-5">
+              {/* Target Passage Speaking Studio */}
+              <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/60 flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5 text-amber-600" />
+                    <span>오늘 소리 내어 연습할 목표 문단 (¶ {(selectedSentenceIndex !== null ? selectedSentenceIndex : 0) + 1})</span>
+                  </span>
+                  <span className="text-[11px] text-slate-400">직접 낭독 &amp; 녹음 스튜디오</span>
                 </div>
-              )}
-            </div>
 
-            {/* Study Pack Expressions */}
-            {studyPack && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center space-x-1.5">
-                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                    <span>원서 속 일상 회화 핵심 표현 (Key Expressions)</span>
-                  </h3>
-                  <span className="text-[11px] text-slate-400">
-                    {studyPack.keyExpressions.length}개 선별
+                {/* Target Text Box */}
+                <div className="p-4 sm:p-5 bg-slate-50 rounded-2xl border border-slate-200">
+                  <p
+                    style={{ fontSize: `${fontSize + 1}px`, lineHeight: 1.8 }}
+                    className="font-serif font-bold text-slate-900"
+                  >
+                    "{targetSentence || '학습할 문단을 선택해 주세요.'}"
+                  </p>
+                </div>
+
+                {/* Listen to reference audio */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-amber-50/60 border border-amber-200/60 text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePlaySentence(targetSentence)}
+                      className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold transition flex items-center gap-1.5 shadow-xs"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                      <span>기준 발음 듣기 (Web Speech)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopySentence(targetSentence)}
+                      className="px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 rounded-xl font-semibold transition flex items-center gap-1"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>복사</span>
+                    </button>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    원어민 음성을 먼저 듣고 호흡과 끊어 읽기를 확인하세요.
                   </span>
                 </div>
 
-                {studyPack.keyExpressions.map((item, idx) => {
-                  const saved = isExprSaved(item.expression);
+                {/* Microphone Recording Station */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                  <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Mic className="w-4 h-4 text-rose-600" />
+                    <span>내 목소리 낭독 녹음 및 확인</span>
+                  </h4>
 
-                  return (
-                    <div
-                      key={idx}
-                      className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:border-amber-300 transition space-y-2.5"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-xs font-extrabold flex items-center justify-center">
-                            {idx + 1}
-                          </span>
-                          <span className="font-extrabold text-base text-slate-900 tracking-tight">
-                            {item.expression}
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-1">
-                          <button
-                            onClick={() => handlePlaySentence(item.expression)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-700 hover:bg-amber-50 transition"
-                            title="발음 듣기"
-                          >
-                            <Volume2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => onSaveExpression(item)}
-                            className={`p-1.5 rounded-lg transition ${
-                              saved
-                                ? 'text-amber-600 bg-amber-50'
-                                : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
-                            }`}
-                            title={saved ? '저장됨' : '단어장에 저장'}
-                          >
-                            <Bookmark className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 text-xs">
-                        <div className="flex items-start space-x-1.5">
-                          <span className="font-bold text-amber-800 shrink-0">일상 의미:</span>
-                          <span className="text-slate-700">{item.everydayMeaning}</span>
-                        </div>
-                        <div className="flex items-start space-x-1.5 text-slate-500">
-                          <span className="font-medium shrink-0">원서 문맥:</span>
-                          <span>{item.inContext}</span>
-                        </div>
+                  {micError && (
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p>{micError}</p>
+                        <p className="font-semibold text-rose-900">
+                          💡 대체 낭독 팁: 마이크가 없어도 위의 [기준 발음 듣기]를 2회 반복 청취 후, 소리 내어 3회 직접 낭독하시면 동일한 섀도잉 훈련 효과를 얻으실 수 있습니다.
+                        </p>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+                  )}
 
-        {/* Tab 3: Shadowing Studio */}
-        {activeTab === 'shadowing' && (
-          <div className="max-w-2xl mx-auto space-y-5">
-            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span className="font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
-                  🎯 오늘 낭독할 목표 문장
-                </span>
-                <span className="text-[11px]">원서에서 직접 선택한 문장</span>
-              </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {!isRecording ? (
+                      <button
+                        type="button"
+                        onClick={startRecording}
+                        className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-sm"
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
+                        <span>🎙️ 녹음 시작</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={stopRecording}
+                        className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-sm animate-pulse"
+                      >
+                        <Square className="w-3 h-3 fill-white" />
+                        <span>⏹ 녹음 정지 ({recordingSeconds}초)</span>
+                      </button>
+                    )}
 
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <p className="font-serif-book text-base sm:text-lg font-bold text-slate-900 leading-relaxed">
-                  "{targetSentence || '원서 본문에서 문장을 선택해 주세요.'}"
-                </p>
-              </div>
+                    {recordedAudioUrl && (
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
+                        <audio controls src={recordedAudioUrl} className="h-8 max-w-[200px] sm:max-w-xs" />
+                        <button
+                          type="button"
+                          onClick={deleteRecording}
+                          className="px-2 py-1 rounded bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 text-xs font-semibold transition"
+                          title="녹음 삭제"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  type="button"
-                  onClick={() => handlePlaySentence(targetSentence)}
-                  className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer"
-                >
-                  <Volume2 className="w-4 h-4" />
-                  <span>원어민 음성 듣기 (Web Speech)</span>
-                </button>
+                  <p className="text-[11px] text-slate-400">
+                    ※ 녹음 파일은 브라우저 세션 메모리(Blob URL)에만 임시 보관되며, 외부 서버로 절대 전송되지 않습니다.
+                  </p>
+                </div>
 
-                <div className="text-[11px] text-slate-400">
-                  외부 AI 연결 없이 안전하게 듣고 소리 내어 연습하세요 ✨
+                {/* Paragraph Switcher in Speaking Mode */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePrevParagraph}
+                      disabled={selectedSentenceIndex === 0}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition"
+                    >
+                      이전 문단 낭독
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNextParagraph}
+                      disabled={selectedSentenceIndex === sentences.length - 1}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition"
+                    >
+                      다음 문단 낭독
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSaveSelectedAsExpression(targetSentence);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 font-bold transition flex items-center gap-1"
+                  >
+                    <Bookmark className="w-3.5 h-3.5 text-amber-600" />
+                    <span>이 문단 단어장 저장</span>
+                  </button>
                 </div>
               </div>
+
+              {/* Step Navigation Bar */}
+              <div className="p-4 bg-white rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('listening')}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>2단계: 듣기로</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleNextParagraph();
+                    handleTabChange('reading');
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <span>✓ 학습 완료 &amp; 다음 문단 읽기</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
+          )}
+
+          {/* Bottom Chapter Switcher */}
+          <div className="p-4 bg-white rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                onPrevChapter?.();
+                scrollToTop();
+              }}
+              disabled={!hasPrevChapter}
+              className="px-4 py-2 font-bold rounded-xl border border-slate-200 bg-white hover:bg-amber-50 hover:text-amber-900 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 transition"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>이전 챕터</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="px-3 py-1.5 text-slate-500 hover:text-slate-800 flex items-center gap-1 font-semibold"
+            >
+              <ArrowUpCircle className="w-4 h-4" />
+              <span>맨 위로</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                onNextChapter?.();
+                scrollToTop();
+              }}
+              disabled={!hasNextChapter}
+              className="px-4 py-2 font-bold rounded-xl border border-slate-200 bg-white hover:bg-amber-50 hover:text-amber-900 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 transition"
+            >
+              <span>다음 챕터</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
-        )}
+        </div>
       </div>
+
+      {saveToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-xl animate-in fade-in flex items-center gap-1.5">
+          <Check className="w-3.5 h-3.5" />
+          <span>{saveToast}</span>
+        </div>
+      )}
     </div>
   );
 };

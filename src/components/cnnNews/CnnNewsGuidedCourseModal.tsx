@@ -26,6 +26,7 @@ import {
 } from '../../types';
 import {
   getNewsArticleById,
+  updateNewsArticle,
   updateParagraphNote,
   updateSentenceAnalysis,
   updateQuestionAnswer,
@@ -132,6 +133,7 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
   const [speakingMicError, setSpeakingMicError] = useState<string | null>(null);
   const speakingMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const speakingAudioChunksRef = useRef<Blob[]>([]);
+  const speakingStreamRef = useRef<MediaStream | null>(null);
 
   // 5단계 섀도잉 상태
   const [selectedShadowId, setSelectedShadowId] = useState<string>('shadow-1');
@@ -141,6 +143,8 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
   const [shadowMicError, setShadowMicError] = useState<string | null>(null);
   const shadowMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const shadowAudioChunksRef = useRef<Blob[]>([]);
+  const shadowStreamRef = useRef<MediaStream | null>(null);
+  const activeBlobUrlsRef = useRef<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setSaveToast(msg);
@@ -171,6 +175,10 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
         setSpeakingTranscript(art.speakingExercises[0].userTranscript || '');
         setSpeakingNote(art.speakingExercises[0].userNote || '');
       }
+
+      if (typeof art.lastReadParagraphIndex === 'number') {
+        setCurrentParagraphIdx(art.lastReadParagraphIndex);
+      }
     }
   };
 
@@ -196,8 +204,38 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
       if (shadowMediaRecorderRef.current && shadowMediaRecorderRef.current.state === 'recording') {
         shadowMediaRecorderRef.current.stop();
       }
+      if (speakingStreamRef.current) {
+        speakingStreamRef.current.getTracks().forEach((t) => t.stop());
+        speakingStreamRef.current = null;
+      }
+      if (shadowStreamRef.current) {
+        shadowStreamRef.current.getTracks().forEach((t) => t.stop());
+        shadowStreamRef.current = null;
+      }
     }
   }, [isOpen, articleId]);
+
+  useEffect(() => {
+    return () => {
+      activeBlobUrlsRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          // ignore
+        }
+      });
+      activeBlobUrlsRef.current.clear();
+      if (speakingStreamRef.current) {
+        speakingStreamRef.current.getTracks().forEach((t) => t.stop());
+        speakingStreamRef.current = null;
+      }
+      if (shadowStreamRef.current) {
+        shadowStreamRef.current.getTracks().forEach((t) => t.stop());
+        shadowStreamRef.current = null;
+      }
+      audioManager.stop();
+    };
+  }, []);
 
   const allSentences = useMemo(() => {
     if (!article) return [];
@@ -221,7 +259,16 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
     setCourseProgress(getGuidedProgress(article.id));
   };
 
-  // 1단계 음성
+  // 1단계 음성 및 문단 이동
+  const handleSelectParagraph = (idx: number) => {
+    setCurrentParagraphIdx(idx);
+    if (article) {
+      const updated = { ...article, lastReadParagraphIndex: idx };
+      updateNewsArticle(updated);
+      setArticle(updated);
+    }
+  };
+
   const handlePlayParagraph = (idx: number) => {
     if (isPlayingAudio) {
       audioManager.stop();
@@ -230,6 +277,11 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
     }
     const text = article.paragraphs[idx];
     if (!text) return;
+    if (!audioManager.isSpeechSupported()) {
+      alert('현재 브라우저 환경에서는 Web Speech 음성 합성(TTS)이 지원되지 않습니다.');
+      return;
+    }
+    handleSelectParagraph(idx);
     setIsPlayingAudio(true);
     audioManager.speak(text, undefined, 0.9).finally(() => {
       setIsPlayingAudio(false);
@@ -363,7 +415,15 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
   const handleStartSpeakingRecording = async () => {
     setSpeakingMicError(null);
     try {
+      if (speakingAudioUrl) {
+        activeBlobUrlsRef.current.delete(speakingAudioUrl);
+        try {
+          URL.revokeObjectURL(speakingAudioUrl);
+        } catch (e) {}
+        setSpeakingAudioUrl(null);
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      speakingStreamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       speakingMediaRecorderRef.current = recorder;
       speakingAudioChunksRef.current = [];
@@ -373,8 +433,11 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
       };
       recorder.onstop = () => {
         const audioBlob = new Blob(speakingAudioChunksRef.current, { type: 'audio/webm' });
-        setSpeakingAudioUrl(URL.createObjectURL(audioBlob));
+        const newUrl = URL.createObjectURL(audioBlob);
+        activeBlobUrlsRef.current.add(newUrl);
+        setSpeakingAudioUrl(newUrl);
         stream.getTracks().forEach((t) => t.stop());
+        speakingStreamRef.current = null;
       };
       recorder.start();
       setIsSpeakingRecording(true);
@@ -388,6 +451,24 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
       speakingMediaRecorderRef.current.stop();
       setIsSpeakingRecording(false);
     }
+  };
+
+  const handleDeleteSpeakingAudio = () => {
+    if (speakingAudioUrl) {
+      activeBlobUrlsRef.current.delete(speakingAudioUrl);
+      try {
+        URL.revokeObjectURL(speakingAudioUrl);
+      } catch (e) {}
+      setSpeakingAudioUrl(null);
+    }
+    const targetEx = article?.speakingExercises?.[0];
+    if (targetEx && article) {
+      updateSpeakingExercise(article.id, targetEx.id, {
+        hasRecordedAudio: false,
+      });
+      refreshData();
+    }
+    showToast('말하기 녹음이 삭제되었습니다.');
   };
 
   const handleSaveSpeakingExercise = (isCompletedToggle?: boolean) => {
@@ -409,7 +490,15 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
   const handleStartShadowRecording = async (shadowId: string) => {
     setShadowMicError(null);
     try {
+      const prevUrl = shadowAudioUrls[shadowId];
+      if (prevUrl) {
+        activeBlobUrlsRef.current.delete(prevUrl);
+        try {
+          URL.revokeObjectURL(prevUrl);
+        } catch (e) {}
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      shadowStreamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       shadowMediaRecorderRef.current = recorder;
       shadowAudioChunksRef.current = [];
@@ -419,8 +508,11 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
       };
       recorder.onstop = () => {
         const audioBlob = new Blob(shadowAudioChunksRef.current, { type: 'audio/webm' });
-        setShadowAudioUrls((prev) => ({ ...prev, [shadowId]: URL.createObjectURL(audioBlob) }));
+        const newUrl = URL.createObjectURL(audioBlob);
+        activeBlobUrlsRef.current.add(newUrl);
+        setShadowAudioUrls((prev) => ({ ...prev, [shadowId]: newUrl }));
         stream.getTracks().forEach((t) => t.stop());
+        shadowStreamRef.current = null;
       };
       recorder.start();
       setIsShadowRecording(true);
@@ -433,6 +525,22 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
     if (shadowMediaRecorderRef.current && shadowMediaRecorderRef.current.state === 'recording') {
       shadowMediaRecorderRef.current.stop();
       setIsShadowRecording(false);
+    }
+  };
+
+  const handleDeleteShadowAudio = (shadowId: string) => {
+    const targetUrl = shadowAudioUrls[shadowId];
+    if (targetUrl) {
+      activeBlobUrlsRef.current.delete(targetUrl);
+      try {
+        URL.revokeObjectURL(targetUrl);
+      } catch (e) {}
+      setShadowAudioUrls((prev) => {
+        const next = { ...prev };
+        delete next[shadowId];
+        return next;
+      });
+      showToast('섀도잉 녹음이 삭제되었습니다.');
     }
   };
 
@@ -567,7 +675,7 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
                     return (
                       <div
                         key={idx}
-                        onClick={() => setCurrentParagraphIdx(idx)}
+                        onClick={() => handleSelectParagraph(idx)}
                         className={`p-4 rounded-lg border transition-all ${
                           isCurrent
                             ? 'border-red-500/70 bg-slate-800/60 shadow-lg ring-1 ring-red-500/30'
@@ -1320,14 +1428,18 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
                         <div className="flex items-center gap-2">
                           <audio controls src={speakingAudioUrl} className="h-8" />
                           <button
-                            onClick={() => setSpeakingAudioUrl(null)}
-                            className="px-2 py-1 rounded bg-slate-800 text-xs text-slate-400"
+                            onClick={handleDeleteSpeakingAudio}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 hover:text-red-400 border border-slate-700"
                           >
                             삭제
                           </button>
                         </div>
                       )}
                     </div>
+
+                    <p className="text-[11px] text-slate-400/90 mt-1">
+                      ※ 녹음된 음성은 브라우저 메모리(임시 Blob URL)에만 유지되며, 페이지를 새로고침하거나 창을 닫으면 자동으로 정리됩니다.
+                    </p>
 
                     <div className="flex items-center justify-between pt-2">
                       <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
@@ -1430,8 +1542,22 @@ export const CnnNewsGuidedCourseModal: React.FC<CnnNewsGuidedCourseModalProps> =
                             ⏹️ 녹음 정지
                           </button>
                         )}
-                        {recordedUrl && <audio controls src={recordedUrl} className="h-7" />}
+                        {recordedUrl && (
+                          <div className="flex items-center gap-2">
+                            <audio controls src={recordedUrl} className="h-7" />
+                            <button
+                              onClick={() => handleDeleteShadowAudio(curShadow.id)}
+                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 hover:text-red-400 border border-slate-700"
+                            >
+                              삭제
+                            </button>
+                          </div>
+                        )}
                       </div>
+
+                      <p className="text-[11px] text-slate-400/90">
+                        ※ 섀도잉 녹음은 브라우저 메모리에 임시로만 보관되며, 새로고침 시 초기화됩니다.
+                      </p>
 
                       <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 pt-1">
                         <input
