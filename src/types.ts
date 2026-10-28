@@ -230,15 +230,71 @@ export interface DebateOutputData {
   updatedAt: string;
 }
 
+export interface CnnVocabItem {
+  id: string;
+  expression: string;          // 영어 표현 (예: "pulmonary nodule", "be diagnosed with")
+  koreanMeaning: string;       // 한국어 뜻 (예: "폐결절", "~로 진단받다")
+  contextSentence: string;     // 원문 사용 문장
+  paragraphIndex?: number;     // 원문 문단 번호 (0-based)
+  isMemorized: boolean;        // 암기 완료 여부
+  needsReview: boolean;        // 복습 필요 여부
+  userNote?: string;           // 사용자 개인 메모
+  partOfSpeech?: string;       // 품사/구문 단위
+}
+
+export interface CnnComprehensionQuiz {
+  id: string;
+  question: string;
+  options: { key: string; text: string }[];
+  correctAnswer: string;       // 'b', 'c' 등
+  explanation: string;         // 정답/오답 기사 근거 해설
+  userSelectedOption?: string; // 사용자가 선택한 답
+  isSubmitted?: boolean;
+  isCorrect?: boolean;
+}
+
+export interface CnnDictationQuiz {
+  id: string;
+  displaySentence: string;     // 빈칸 표시 문장
+  targetSentence: string;      // 정답 전체 문장
+  blankAnswers: string[];      // 정답 단어 목록
+  userInputs: string[];        // 사용자 입력값
+  isSubmitted?: boolean;
+  accuracyRate?: number;       // 정답률 (0~100)
+  isCorrect?: boolean;
+  revealed?: boolean;          // 정답 보기 여부
+}
+
+export interface CnnSpeakingExercise {
+  id: string;
+  koreanPrompt: string;        // "생검을 하거나 수술로 제거할 수 있다."
+  targetEnglish: string;       // "It can either be biopsied or surgically removed, then tested."
+  userTranscript?: string;     // 사용자가 작성한 영어 표현
+  userNote?: string;           // 개인 메모
+  isCompleted: boolean;
+  hasRecordedAudio?: boolean;  // 녹음 여부
+}
+
+export interface CnnShadowingExercise {
+  id: string;
+  targetSentence: string;
+  paragraphIndex: number;
+  userNote?: string;
+  isCompleted: boolean;
+  hasRecordedAudio?: boolean;
+}
+
 export interface CnnNewsArticle {
   id: string;
   title: string;
+  koreanTitle?: string;          // 한국어 기사 제목 (Step 11)
   source: string;                // 'CNN' 또는 입력 출처
   articleDate: string;           // 기사 작성일 또는 '미확인'
   createdAt: string;             // 로컬 등록일 (ISO)
-  topic: string;                 // Politics, Economy, Science/Tech, World, Climate, Culture, Society
+  topic: string;                 // Politics, Economy, Science/Tech, Health, World, Climate, Culture, Society
   rawContent: string;            // 원본 텍스트
   paragraphs: string[];          // 문단 배열
+  koreanParagraphs?: string[];   // 문단별 1:1 한국어 번역 (Step 11)
   koreanSummary?: string;        // 사용자 작성 한국어 요약
   status: NewsStudyStatus;
   userNotes: Record<number, string>; // 문단별 메모 (paragraphIndex -> note)
@@ -250,6 +306,13 @@ export interface CnnNewsArticle {
   debateOutput?: DebateOutputData;
   lastReadParagraphIndex?: number;
   lastReadAt?: string;
+
+  // Step 11 통합 학습 데이터
+  coreVocabularies?: CnnVocabItem[];
+  comprehensionQuizzes?: CnnComprehensionQuiz[];
+  dictationQuizzes?: CnnDictationQuiz[];
+  speakingExercises?: CnnSpeakingExercise[];
+  shadowingExercises?: CnnShadowingExercise[];
 }
 
 export interface CnnNewsStudyLog {
@@ -267,24 +330,35 @@ export interface CnnNewsStudyLog {
 }
 
 // ============================================================================
-// CNN News C2 Guided Course Types (Step 10)
+// CNN News C2 Guided Course Types (Step 10 & 11)
 // ============================================================================
+
+export type StepProgressState = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
 
 export type GuidedCourseStep =
   | 'NOT_STARTED'
   | 'READING'
+  | 'VOCABULARY'
   | 'ANALYSIS'
   | 'COMPREHENSION'
+  | 'DICTATION'
+  | 'SPEAKING'
+  | 'SHADOWING'
   | 'WRITING'
   | 'REVIEW'
   | 'COMPLETED';
 
 export interface GuidedCourseChecklist {
   hasReadPassage: boolean;          // 1단계: 원문 읽기 및 문단 파악 여부
-  analyzedSentenceIds: string[];    // 2단계: 실제 분석한 문장 ID 목록
-  answeredQuestionIds: string[];    // 3단계: 실제 작성한 C2 질문 ID 목록
-  hasCompletedWriting: boolean;     // 4단계: 요약/논증문 작성 완료 여부
-  hasReviewedAll: boolean;          // 5단계: 최종 복습 및 완료 체크
+  memorizedVocabCount?: number;     // 2단계: 핵심 어휘 암기/확인 수
+  analyzedSentenceIds: string[];    // 3단계: 실제 분석한 문장 ID 목록
+  answeredQuestionIds: string[];    // C2 서술형 질문 (STEP 10 호환)
+  quizScores?: { passedCount: number; totalCount: number }; // 4단계: 객관식 퀴즈 결과
+  dictationCompletedCount?: number; // 5단계: 받아쓰기 완료 수
+  speakingCompleted?: boolean;      // 6단계: 말하기 완료 여부
+  shadowingCompletedCount?: number; // 7단계: 섀도잉 완료 수
+  hasCompletedWriting: boolean;     // 영작문 완료 여부 (STEP 10 호환)
+  hasReviewedAll: boolean;          // 8단계: 최종 복습 및 완료 체크
 }
 
 export interface GuidedCourseProgress {
@@ -292,6 +366,7 @@ export interface GuidedCourseProgress {
   currentStep: GuidedCourseStep;
   highestStepReached: GuidedCourseStep;
   lastParagraphIndex: number;
+  stepStates?: Partial<Record<GuidedCourseStep, StepProgressState>>;
   startedAt?: string;
   completedAt?: string;
   lastModifiedAt: string;

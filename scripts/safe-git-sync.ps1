@@ -86,10 +86,15 @@ Write-Host "      TypeScript 타입 검사 통과 (오류 0건)" -ForegroundColo
 # 5. 프로덕션 빌드 검사
 Write-Host "[4/6] Vite 프로덕션 빌드 검사 (npm run build)..." -ForegroundColor Yellow
 
-# Windows OneDrive 환경에서 dist 폴더 락 방지를 위해 안전 정리
+# Windows OneDrive 환경에서 dist 및 .vite 캐시 락 방지를 위해 안전 정리
 if (Test-Path "$repoRoot\dist") {
     try {
         Get-ChildItem -Path "$repoRoot\dist" -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+    } catch {}
+}
+if (Test-Path "$repoRoot\node_modules\.vite") {
+    try {
+        Remove-Item -Path "$repoRoot\node_modules\.vite" -Force -Recurse -ErrorAction SilentlyContinue
     } catch {}
 }
 

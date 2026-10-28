@@ -331,8 +331,11 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
                 {article.source} • {article.articleDate}
               </span>
             </div>
-            <h2 className="text-sm sm:text-base font-bold text-white truncate max-w-md sm:max-w-xl">
-              {article.title}
+            <h2 className="text-sm sm:text-base font-bold text-white truncate max-w-md sm:max-w-xl flex items-center gap-2">
+              <span>{article.title}</span>
+              {article.koreanTitle && (
+                <span className="text-xs font-normal text-slate-400 hidden md:inline">({article.koreanTitle})</span>
+              )}
             </h2>
           </div>
         </div>
@@ -343,11 +346,11 @@ export const CnnNewsReaderView: React.FC<CnnNewsReaderViewProps> = ({
             type="button"
             onClick={() => setIsGuidedModalOpen(true)}
             className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm transition cursor-pointer"
-            title="5단계 실전 C2 학습 코스 시작"
+            title="8단계 실전 통합 C2 학습 코스 시작"
           >
             <span>🎯</span>
-            <span className="hidden sm:inline">Guided C2 Study (단계별 학습)</span>
-            <span className="sm:hidden">단계별 학습</span>
+            <span className="hidden sm:inline">실전 C2 학습 코스 (8단계)</span>
+            <span className="sm:hidden">8단계 학습</span>
           </button>
           {/* 상태 드롭다운 */}
           <select

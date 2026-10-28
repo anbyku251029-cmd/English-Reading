@@ -18,6 +18,12 @@ import {
   DebateOutputData,
   GuidedCourseStep,
   GuidedCourseProgress,
+  CnnVocabItem,
+  CnnComprehensionQuiz,
+  CnnDictationQuiz,
+  CnnSpeakingExercise,
+  CnnShadowingExercise,
+  StepProgressState,
 } from '../types';
 import { STORAGE_KEYS as STUDY_KEYS, loadSavedExpressions, saveExpressions } from './studyStorage';
 
@@ -177,15 +183,100 @@ export function splitIntoSentences(paragraphText: string): string[] {
 }
 
 // ============================================================================
-// 3. 기사 CRUD (Articles Management)
+// 3. 기사 CRUD (Articles Management) & STEP 11 실전 기사 시드
 // ============================================================================
+
+export const SEED_ARTICLE_LUNG_NODULES: CnnNewsArticle = {
+  id: 'CNN_LUNG_NODULES_001',
+  title: 'What to Know About Lung Nodules',
+  koreanTitle: '폐 결절에 대해 알아야 할 것들',
+  source: 'CNN News English',
+  articleDate: '2026-10-28',
+  createdAt: '2026-10-28T12:00:00.000Z',
+  topic: 'Health',
+  rawContent: "It's an area of abnormal growth in the lungs.\n\nAnd in the U.S., about 1.6 million patients are diagnosed with pulmonary nodules every year.\n\n\"They can vary from different sizes, from, you know, anywhere from one millimeter up to three centimeters, as we kind of define them as a nodule. But they're a spot that can occur for many reasons, many of which are benign, but sometimes they can be cancerous as well.\"\n\nDr. Bobby Mahajan with the American Lung Association says early lung nodule detection allows doctors to see if the mass is growing.\n\nIt can either be biopsied or surgically removed, then tested.\n\n\"If there are signs of cancer in the nodule, depending on the age of the person, there are other medical issues, we kind of say, well, do we do more of a resection to remove more of the lung itself so that there's a low risk of the nodule coming back?\"\n\nMahajan says there are very few symptoms with early-stage lung cancer, so finding a nodule that ends up being cancerous allows for early treatment.\n\n\"Only about 17 to 20% of individuals who are eligible for lung cancer screening actually get screened.\"\n\nPeople between the ages of 50 and 80 who currently smoke, have what's called a \"20 pack-year\" smoking history, which is 1 pack a day for 20 years or two packs a day for 10 years, or if you quit smoking within the last 15 years, are eligible for lung cancer screening.\n\n\"If we can detect a nodule at the earliest stage, at five years, there's a 92% survival.\" ",
+  paragraphs: ["It's an area of abnormal growth in the lungs.", "And in the U.S., about 1.6 million patients are diagnosed with pulmonary nodules every year.", "\"They can vary from different sizes, from, you know, anywhere from one millimeter up to three centimeters, as we kind of define them as a nodule. But they're a spot that can occur for many reasons, many of which are benign, but sometimes they can be cancerous as well.\"", "Dr. Bobby Mahajan with the American Lung Association says early lung nodule detection allows doctors to see if the mass is growing.", "It can either be biopsied or surgically removed, then tested.", "\"If there are signs of cancer in the nodule, depending on the age of the person, there are other medical issues, we kind of say, well, do we do more of a resection to remove more of the lung itself so that there's a low risk of the nodule coming back?\"", "Mahajan says there are very few symptoms with early-stage lung cancer, so finding a nodule that ends up being cancerous allows for early treatment.", "\"Only about 17 to 20% of individuals who are eligible for lung cancer screening actually get screened.\"", "People between the ages of 50 and 80 who currently smoke, have what's called a \"20 pack-year\" smoking history, which is 1 pack a day for 20 years or two packs a day for 10 years, or if you quit smoking within the last 15 years, are eligible for lung cancer screening.", "\"If we can detect a nodule at the earliest stage, at five years, there's a 92% survival.\""],
+  koreanParagraphs: ["폐결절은 폐에 비정상적인 조직이 자라 형성된 부위입니다.", "미국에서는 매년 약 160만 명의 환자가 폐결절 진단을 받습니다.", "“폐결절의 크기는 다양하며, 보통 결절이라고 정의하는 크기는 1mm에서 3cm까지입니다. 여러 가지 원인으로 생길 수 있는 병변으로, 대부분은 양성이지만 때로는 암성 병변일 수도 있습니다.”", "미국폐협회의 바비 마하잔 박사는 폐결절을 조기에 발견하면 의료진이 결절의 크기가 커지고 있는지 확인할 수 있다고 말합니다.", "결절은 조직검사를 하거나 수술로 제거한 뒤 검사를 받을 수 있습니다.", "“결절에서 암의 징후가 발견되면 환자의 나이나 다른 건강상 문제 등을 고려해 폐 조직을 더 많이 절제할지 판단합니다. 이는 결절이 재발할 위험을 낮추기 위한 것입니다.”", "마하잔은 초기 폐암은 증상이 거의 없기 때문에, 검사에서 발견된 결절이 암으로 판명되면 조기에 치료할 수 있다고 설명합니다.", "“폐암 검진 대상자 중 실제로 검진을 받는 사람은 약 17~20%에 불과합니다.”", "50~80세 성인 중 현재 흡연 중이거나 20갑년의 흡연력이 있는 사람, 즉 20년 동안 하루 한 갑씩 또는 10년 동안 하루 두 갑씩 담배를 피운 사람, 또는 금연한 지 15년이 지나지 않은 사람은 폐암 검진 대상자입니다.", "“결절을 가장 초기 단계에서 발견하면 5년 생존율은 92%에 달합니다.”"],
+  koreanSummary: '폐결절의 정의와 크기 범위(1mm~3cm), 조기 발견의 중요성 및 고위험군 대상 폐암 검진(20갑년 흡연력 등)의 생존율 향상 효과(조기 발견 시 5년 생존율 92%)를 다룬 CNN 뉴스 기사입니다.',
+  status: 'not_started',
+  userNotes: {},
+  fileName: 'CNN_What_to_Know_About_Lung_Nodules.txt',
+  fileType: 'manual',
+  sentenceAnalyses: {},
+  readingQuestions: createDefaultReadingQuestions(),
+  writingOutput: {
+    summary: '',
+    stance: 'neutral',
+    opinionEssay: '',
+    alternativeProposals: '',
+    koreanDraft: '',
+    createdAt: '2026-10-28T12:00:00.000Z',
+    updatedAt: '2026-10-28T12:00:00.000Z',
+  },
+  debateOutput: {
+    coreIssue: '',
+    argumentsFor: '',
+    argumentsAgainst: '',
+    counterArguments: '',
+    rebuttal: '',
+    finalPosition: '',
+    updatedAt: '2026-10-28T12:00:00.000Z',
+  },
+  lastReadParagraphIndex: 0,
+  lastReadAt: '2026-10-28T12:00:00.000Z',
+  coreVocabularies: [{"id": "vocab-1", "expression": "abnormal", "koreanMeaning": "비정상적인", "contextSentence": "It's an area of abnormal growth in the lungs.", "paragraphIndex": 0, "isMemorized": false, "needsReview": true, "partOfSpeech": "형용사", "userNote": ""}, {"id": "vocab-2", "expression": "be diagnosed with", "koreanMeaning": "~로 진단받다", "contextSentence": "And in the U.S., about 1.6 million patients are diagnosed with pulmonary nodules every year.", "paragraphIndex": 1, "isMemorized": false, "needsReview": true, "partOfSpeech": "동사구", "userNote": ""}, {"id": "vocab-3", "expression": "pulmonary nodule", "koreanMeaning": "폐결절", "contextSentence": "And in the U.S., about 1.6 million patients are diagnosed with pulmonary nodules every year.", "paragraphIndex": 1, "isMemorized": false, "needsReview": true, "partOfSpeech": "명사구", "userNote": ""}, {"id": "vocab-4", "expression": "define as", "koreanMeaning": "~으로 정의하다", "contextSentence": "\"They can vary from different sizes, from, you know, anywhere from one millimeter up to three centimeters, as we kind of define them as a nodule.\"", "paragraphIndex": 2, "isMemorized": false, "needsReview": true, "partOfSpeech": "동사구", "userNote": ""}, {"id": "vocab-5", "expression": "benign", "koreanMeaning": "양성의", "contextSentence": "But they're a spot that can occur for many reasons, many of which are benign, but sometimes they can be cancerous as well.", "paragraphIndex": 2, "isMemorized": false, "needsReview": true, "partOfSpeech": "형용사", "userNote": ""}, {"id": "vocab-6", "expression": "cancerous", "koreanMeaning": "암성의, 암이 있는", "contextSentence": "But they're a spot that can occur for many reasons, many of which are benign, but sometimes they can be cancerous as well.", "paragraphIndex": 2, "isMemorized": false, "needsReview": true, "partOfSpeech": "형용사", "userNote": ""}, {"id": "vocab-7", "expression": "detection", "koreanMeaning": "발견, 조기 발견", "contextSentence": "Dr. Bobby Mahajan with the American Lung Association says early lung nodule detection allows doctors to see if the mass is growing.", "paragraphIndex": 3, "isMemorized": false, "needsReview": true, "partOfSpeech": "명사", "userNote": ""}, {"id": "vocab-8", "expression": "mass", "koreanMeaning": "덩어리, 종괴", "contextSentence": "Dr. Bobby Mahajan with the American Lung Association says early lung nodule detection allows doctors to see if the mass is growing.", "paragraphIndex": 3, "isMemorized": false, "needsReview": true, "partOfSpeech": "명사", "userNote": ""}, {"id": "vocab-9", "expression": "biopsy", "koreanMeaning": "생검, 조직 검사", "contextSentence": "It can either be biopsied or surgically removed, then tested.", "paragraphIndex": 4, "isMemorized": false, "needsReview": true, "partOfSpeech": "동사/명사", "userNote": ""}, {"id": "vocab-10", "expression": "surgically", "koreanMeaning": "수술로", "contextSentence": "It can either be biopsied or surgically removed, then tested.", "paragraphIndex": 4, "isMemorized": false, "needsReview": true, "partOfSpeech": "부사", "userNote": ""}, {"id": "vocab-11", "expression": "resection", "koreanMeaning": "절제, 절제술", "contextSentence": "\"If there are signs of cancer in the nodule, depending on the age of the person, there are other medical issues, we kind of say, well, do we do more of a resection to remove more of the lung itself so that there's a low risk of the nodule coming back?\"", "paragraphIndex": 5, "isMemorized": false, "needsReview": true, "partOfSpeech": "명사", "userNote": ""}, {"id": "vocab-12", "expression": "early treatment", "koreanMeaning": "조기 치료", "contextSentence": "Mahajan says there are very few symptoms with early-stage lung cancer, so finding a nodule that ends up being cancerous allows for early treatment.", "paragraphIndex": 6, "isMemorized": false, "needsReview": true, "partOfSpeech": "명사구", "userNote": ""}, {"id": "vocab-13", "expression": "be eligible for", "koreanMeaning": "~의 자격이 있다, ~의 대상이 되다", "contextSentence": "\"Only about 17 to 20% of individuals who are eligible for lung cancer screening actually get screened.\"", "paragraphIndex": 7, "isMemorized": false, "needsReview": true, "partOfSpeech": "형용사구/숙어", "userNote": ""}, {"id": "vocab-14", "expression": "screening", "koreanMeaning": "검사", "contextSentence": "\"Only about 17 to 20% of individuals who are eligible for lung cancer screening actually get screened.\"", "paragraphIndex": 7, "isMemorized": false, "needsReview": true, "partOfSpeech": "명사", "userNote": ""}],
+  comprehensionQuizzes: [{"id": "quiz-1", "question": "기사에 따르면, 폐결절을 조기에 발견하는 것이 중요한 이유는 무엇인가요?", "options": [{"key": "a", "text": "결절이 발견되면 즉시 수술을 진행할 수 있기 때문에"}, {"key": "b", "text": "결절의 크기와 성장 여부를 확인할 수 있기 때문에"}, {"key": "c", "text": "폐암의 재발 가능성을 완전히 없앨 수 있기 때문에"}], "correctAnswer": "b", "explanation": "기사 본문(4번째 문단)에서 미국폐협회의 바비 마하잔 박사는 조기 폐결절 발견을 통해 의사들이 덩어리(결절)가 커지고 있는지 확인할 수 있게 해준다고 명시하고 있습니다(\"allows doctors to see if the mass is growing\")."}, {"id": "quiz-2", "question": "폐암 검진 대상자 중 실제로 검진을 받는 사람의 비율은 어느 정도인가요?", "options": [{"key": "a", "text": "약 5~10%"}, {"key": "b", "text": "약 12~17%"}, {"key": "c", "text": "약 17~20%"}], "correctAnswer": "c", "explanation": "기사 본문(8번째 문단)에서 \"폐암 검진 대상자 중 실제로 검진을 받는 사람은 약 17~20%에 불과하다(Only about 17 to 20% of individuals who are eligible for lung cancer screening actually get screened)\"고 명시하고 있습니다."}],
+  dictationQuizzes: [{"id": "dict-1", "displaySentence": "It's an ______ of ______ growth in the ______.", "targetSentence": "It's an area of abnormal growth in the lungs.", "blankAnswers": ["area", "abnormal", "lungs"], "userInputs": ["", "", ""], "isSubmitted": false, "revealed": false}, {"id": "dict-2", "displaySentence": "There are very few symptoms with early-stage ______ cancer, so finding a ______ that ends up being ______ allows for early ______.", "targetSentence": "There are very few symptoms with early-stage lung cancer, so finding a nodule that ends up being cancerous allows for early treatment.", "blankAnswers": ["lung", "nodule", "cancerous", "treatment"], "userInputs": ["", "", "", ""], "isSubmitted": false, "revealed": false}],
+  speakingExercises: [{"id": "speak-1", "koreanPrompt": "생검을 하거나 수술로 제거할 수 있다.", "targetEnglish": "It can either be biopsied or surgically removed, then tested.", "userTranscript": "", "userNote": "", "isCompleted": false}],
+  shadowingExercises: [{"id": "shadow-1", "targetSentence": "It's an area of abnormal growth in the lungs.", "paragraphIndex": 0, "userNote": "", "isCompleted": false}, {"id": "shadow-2", "targetSentence": "And in the U.S., about 1.6 million patients are diagnosed with pulmonary nodules every year.", "paragraphIndex": 1, "userNote": "", "isCompleted": false}, {"id": "shadow-3", "targetSentence": "It can either be biopsied or surgically removed, then tested.", "paragraphIndex": 4, "userNote": "", "isCompleted": false}, {"id": "shadow-4", "targetSentence": "Mahajan says there are very few symptoms with early-stage lung cancer, so finding a nodule that ends up being cancerous allows for early treatment.", "paragraphIndex": 6, "userNote": "", "isCompleted": false}],
+};
 
 export function loadNewsArticles(): CnnNewsArticle[] {
   try {
     const raw = localStorage.getItem(CNN_STORAGE_KEYS.ARTICLES);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const list = Array.isArray(parsed) ? parsed : [];
+
+    // 저장소에 시드 기사가 있을 경우 STEP 11 필드 누락 보강
+    const seedIdx = list.findIndex((a) => a.id === SEED_ARTICLE_LUNG_NODULES.id);
+    if (seedIdx >= 0) {
+      const current = list[seedIdx];
+      let needsSave = false;
+      if (!current.coreVocabularies || current.coreVocabularies.length === 0) {
+        current.coreVocabularies = SEED_ARTICLE_LUNG_NODULES.coreVocabularies;
+        needsSave = true;
+      }
+      if (!current.comprehensionQuizzes || current.comprehensionQuizzes.length === 0) {
+        current.comprehensionQuizzes = SEED_ARTICLE_LUNG_NODULES.comprehensionQuizzes;
+        needsSave = true;
+      }
+      if (!current.dictationQuizzes || current.dictationQuizzes.length === 0) {
+        current.dictationQuizzes = SEED_ARTICLE_LUNG_NODULES.dictationQuizzes;
+        needsSave = true;
+      }
+      if (!current.speakingExercises || current.speakingExercises.length === 0) {
+        current.speakingExercises = SEED_ARTICLE_LUNG_NODULES.speakingExercises;
+        needsSave = true;
+      }
+      if (!current.shadowingExercises || current.shadowingExercises.length === 0) {
+        current.shadowingExercises = SEED_ARTICLE_LUNG_NODULES.shadowingExercises;
+        needsSave = true;
+      }
+      if (!current.koreanParagraphs || current.koreanParagraphs.length === 0) {
+        current.koreanParagraphs = SEED_ARTICLE_LUNG_NODULES.koreanParagraphs;
+        needsSave = true;
+      }
+      if (!current.koreanTitle) {
+        current.koreanTitle = SEED_ARTICLE_LUNG_NODULES.koreanTitle;
+        needsSave = true;
+      }
+      if (needsSave) {
+        list[seedIdx] = current;
+        saveNewsArticles(list);
+      }
+    }
+    return list;
   } catch (e) {
     console.warn('Failed to parse cnn news articles from localStorage', e);
     return [];
@@ -200,9 +291,23 @@ export function saveNewsArticles(articles: CnnNewsArticle[]): void {
   }
 }
 
+export function ensureSeedArticleLungNodules(): CnnNewsArticle {
+  const list = loadNewsArticles();
+  const found = list.find((a) => a.id === SEED_ARTICLE_LUNG_NODULES.id);
+  if (found) return found;
+  const updated = [SEED_ARTICLE_LUNG_NODULES, ...list];
+  saveNewsArticles(updated);
+  return SEED_ARTICLE_LUNG_NODULES;
+}
+
 export function getNewsArticleById(id: string): CnnNewsArticle | undefined {
   const list = loadNewsArticles();
-  return list.find((a) => a.id === id);
+  const found = list.find((a) => a.id === id);
+  if (found) return found;
+  if (id === SEED_ARTICLE_LUNG_NODULES.id) {
+    return ensureSeedArticleLungNodules();
+  }
+  return undefined;
 }
 
 export function addNewsArticle(
@@ -397,6 +502,201 @@ export function updateDebateOutput(newsId: string, debate: DebateOutputData): vo
 
   updateNewsArticle(article);
   recordNewsActivity(newsId, article.title, article.status);
+}
+
+// ============================================================================
+// 5-B. STEP 11 통합 학습 엔진 (어휘, 퀴즈, 받아쓰기, 말하기, 섀도잉)
+// ============================================================================
+
+export function updateCoreVocabItem(newsId: string, vocab: CnnVocabItem): void {
+  const article = getNewsArticleById(newsId);
+  if (!article) return;
+
+  const currentList = article.coreVocabularies || [];
+  const idx = currentList.findIndex((v) => v.id === vocab.id);
+  if (idx >= 0) {
+    currentList[idx] = vocab;
+  } else {
+    currentList.push(vocab);
+  }
+  article.coreVocabularies = [...currentList];
+
+  if (article.status === 'not_started') {
+    article.status = 'in_progress';
+  }
+  updateNewsArticle(article);
+}
+
+export function updateComprehensionQuiz(
+  newsId: string,
+  quizId: string,
+  userSelectedOption: string
+): { isCorrect: boolean; quiz?: CnnComprehensionQuiz } {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.comprehensionQuizzes) {
+    return { isCorrect: false };
+  }
+
+  let resultQuiz: CnnComprehensionQuiz | undefined;
+  article.comprehensionQuizzes = article.comprehensionQuizzes.map((q) => {
+    if (q.id === quizId) {
+      const isCorrect = q.correctAnswer.toLowerCase() === userSelectedOption.trim().toLowerCase();
+      resultQuiz = {
+        ...q,
+        userSelectedOption: userSelectedOption.trim(),
+        isSubmitted: true,
+        isCorrect,
+      };
+      return resultQuiz;
+    }
+    return q;
+  });
+
+  if (article.status === 'not_started') {
+    article.status = 'in_progress';
+  }
+  updateNewsArticle(article);
+  return { isCorrect: !!resultQuiz?.isCorrect, quiz: resultQuiz };
+}
+
+export function resetComprehensionQuiz(newsId: string, quizId?: string): void {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.comprehensionQuizzes) return;
+
+  article.comprehensionQuizzes = article.comprehensionQuizzes.map((q) => {
+    if (!quizId || q.id === quizId) {
+      return {
+        ...q,
+        userSelectedOption: undefined,
+        isSubmitted: false,
+        isCorrect: undefined,
+      };
+    }
+    return q;
+  });
+  updateNewsArticle(article);
+}
+
+export function updateDictationQuiz(
+  newsId: string,
+  quizId: string,
+  userInputs: string[]
+): { isCorrect: boolean; accuracyRate: number; quiz?: CnnDictationQuiz } {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.dictationQuizzes) {
+    return { isCorrect: false, accuracyRate: 0 };
+  }
+
+  let resultQuiz: CnnDictationQuiz | undefined;
+  article.dictationQuizzes = article.dictationQuizzes.map((q) => {
+    if (q.id === quizId) {
+      const total = q.blankAnswers.length;
+      let matched = 0;
+      q.blankAnswers.forEach((ans, i) => {
+        const u = (userInputs[i] || '').trim().toLowerCase();
+        if (u === ans.trim().toLowerCase()) {
+          matched++;
+        }
+      });
+      const accuracyRate = total > 0 ? Math.round((matched / total) * 100) : 0;
+      const isCorrect = matched === total;
+
+      resultQuiz = {
+        ...q,
+        userInputs,
+        isSubmitted: true,
+        isCorrect,
+        accuracyRate,
+      };
+      return resultQuiz;
+    }
+    return q;
+  });
+
+  if (article.status === 'not_started') {
+    article.status = 'in_progress';
+  }
+  updateNewsArticle(article);
+  return {
+    isCorrect: !!resultQuiz?.isCorrect,
+    accuracyRate: resultQuiz?.accuracyRate ?? 0,
+    quiz: resultQuiz,
+  };
+}
+
+export function resetDictationQuiz(newsId: string, quizId?: string): void {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.dictationQuizzes) return;
+
+  article.dictationQuizzes = article.dictationQuizzes.map((q) => {
+    if (!quizId || q.id === quizId) {
+      return {
+        ...q,
+        userInputs: q.blankAnswers.map(() => ''),
+        isSubmitted: false,
+        isCorrect: undefined,
+        accuracyRate: undefined,
+        revealed: false,
+      };
+    }
+    return q;
+  });
+  updateNewsArticle(article);
+}
+
+export function revealDictationQuizAnswer(newsId: string, quizId: string, revealed: boolean): void {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.dictationQuizzes) return;
+
+  article.dictationQuizzes = article.dictationQuizzes.map((q) => {
+    if (q.id === quizId) {
+      return { ...q, revealed };
+    }
+    return q;
+  });
+  updateNewsArticle(article);
+}
+
+export function updateSpeakingExercise(
+  newsId: string,
+  exerciseId: string,
+  updates: Partial<CnnSpeakingExercise>
+): void {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.speakingExercises) return;
+
+  article.speakingExercises = article.speakingExercises.map((s) => {
+    if (s.id === exerciseId) {
+      return { ...s, ...updates };
+    }
+    return s;
+  });
+
+  if (article.status === 'not_started') {
+    article.status = 'in_progress';
+  }
+  updateNewsArticle(article);
+}
+
+export function updateShadowingExercise(
+  newsId: string,
+  exerciseId: string,
+  updates: Partial<CnnShadowingExercise>
+): void {
+  const article = getNewsArticleById(newsId);
+  if (!article || !article.shadowingExercises) return;
+
+  article.shadowingExercises = article.shadowingExercises.map((s) => {
+    if (s.id === exerciseId) {
+      return { ...s, ...updates };
+    }
+    return s;
+  });
+
+  if (article.status === 'not_started') {
+    article.status = 'in_progress';
+  }
+  updateNewsArticle(article);
 }
 
 // ============================================================================
@@ -670,15 +970,19 @@ export function updateGuidedProgress(
   const all = loadAllGuidedProgress();
   const current = getGuidedProgress(newsId);
 
-  // 단계 도달 순서 우선순위
+  // 단계 도달 순서 우선순위 (STEP 10 5단계 및 STEP 11 8단계 호환)
   const stepRank: Record<GuidedCourseStep, number> = {
     NOT_STARTED: 0,
     READING: 1,
-    ANALYSIS: 2,
-    COMPREHENSION: 3,
-    WRITING: 4,
-    REVIEW: 5,
-    COMPLETED: 6,
+    VOCABULARY: 2,
+    ANALYSIS: 3,
+    COMPREHENSION: 4,
+    DICTATION: 5,
+    SPEAKING: 6,
+    SHADOWING: 7,
+    WRITING: 8,
+    REVIEW: 9,
+    COMPLETED: 10,
   };
 
   const newStep = updates.currentStep || current.currentStep;
@@ -729,10 +1033,23 @@ export function syncGuidedProgressWithArticle(article: CnnNewsArticle): GuidedCo
     (article.debateOutput?.coreIssue && article.debateOutput.coreIssue.trim().length > 0)
   );
 
+  // STEP 11 항목 동기화
+  const memorizedVocab = (article.coreVocabularies || []).filter((v) => v.isMemorized).length;
+  const passedQuizzes = (article.comprehensionQuizzes || []).filter((q) => q.isCorrect).length;
+  const totalQuizzes = (article.comprehensionQuizzes || []).length;
+  const completedDict = (article.dictationQuizzes || []).filter((d) => d.isCorrect).length;
+  const speakingDone = (article.speakingExercises || []).every((s) => s.isCompleted) && (article.speakingExercises || []).length > 0;
+  const completedShadow = (article.shadowingExercises || []).filter((s) => s.isCompleted).length;
+
   const updatedChecklist = {
     hasReadPassage: current.checklist.hasReadPassage || (article.lastReadParagraphIndex || 0) > 0 || article.paragraphs.length > 0,
+    memorizedVocabCount: memorizedVocab,
     analyzedSentenceIds: analyzedIds,
     answeredQuestionIds: answeredIds,
+    quizScores: { passedCount: passedQuizzes, totalCount: totalQuizzes },
+    dictationCompletedCount: completedDict,
+    speakingCompleted: speakingDone,
+    shadowingCompletedCount: completedShadow,
     hasCompletedWriting: hasWriting,
     hasReviewedAll: current.checklist.hasReviewedAll,
   };
