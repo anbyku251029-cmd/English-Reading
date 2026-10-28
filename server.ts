@@ -229,6 +229,110 @@ app.get('/api/chapters/:id/paragraphs', (req, res) => {
   }
 });
 
+// ============================================================================
+// Local CNN News SQLite API (2022-01)
+// ============================================================================
+let _cnnNewsDb: DatabaseSync | null = null;
+
+function getCnnNewsDb(): DatabaseSync | null {
+  if (!_cnnNewsDb) {
+    const dbPath = path.resolve(__dirname, 'data', 'local_books', 'cnn_news_2022_01.sqlite3');
+    if (fs.existsSync(dbPath)) {
+      _cnnNewsDb = new DatabaseSync(dbPath, { readOnly: true });
+    }
+  }
+  return _cnnNewsDb;
+}
+
+// GET /api/cnn-news - 2022-01 CNN 뉴스 목록 조회
+app.get('/api/cnn-news', (_req, res) => {
+  try {
+    const db = getCnnNewsDb();
+    if (!db) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'CNN_DB_NOT_FOUND', message: 'CNN 뉴스 SQLite 데이터베이스가 존재하지 않습니다.' },
+      });
+    }
+
+    const query = `
+      SELECT 
+        a.id,
+        a.article_date,
+        a.title,
+        a.korean_title,
+        a.topic,
+        a.source,
+        a.korean_summary,
+        COUNT(DISTINCT p.id) AS paragraph_count,
+        COUNT(DISTINCT v.id) AS vocab_count,
+        COUNT(DISTINCT q.id) AS quiz_count
+      FROM articles a
+      LEFT JOIN paragraphs p ON a.id = p.article_id
+      LEFT JOIN vocabularies v ON a.id = v.article_id
+      LEFT JOIN quizzes q ON a.id = q.article_id
+      GROUP BY a.id
+      ORDER BY a.article_date ASC
+    `;
+    const articles = db.prepare(query).all();
+    return res.json({
+      ok: true,
+      articles,
+      total: articles.length,
+    });
+  } catch (error: any) {
+    console.error('[API Error /api/cnn-news]:', error?.message || error);
+    return res.status(500).json({
+      ok: false,
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'CNN 뉴스 목록을 조회하는 중 오류가 발생했습니다.' },
+    });
+  }
+});
+
+// GET /api/cnn-news/:id - 특정 CNN 뉴스 상세 및 문단/어휘/퀴즈 조회
+app.get('/api/cnn-news/:id', (req, res) => {
+  const articleId = req.params.id;
+  try {
+    const db = getCnnNewsDb();
+    if (!db) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'CNN_DB_NOT_FOUND', message: 'CNN 뉴스 SQLite 데이터베이스가 존재하지 않습니다.' },
+      });
+    }
+
+    const article = db.prepare('SELECT * FROM articles WHERE id = ?').get(articleId) as any;
+    if (!article) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'ARTICLE_NOT_FOUND', message: `ID가 ${articleId}인 기사를 찾을 수 없습니다.` },
+      });
+    }
+
+    const paragraphs = db.prepare('SELECT * FROM paragraphs WHERE article_id = ? ORDER BY paragraph_number ASC').all(articleId);
+    const vocabularies = db.prepare('SELECT * FROM vocabularies WHERE article_id = ? ORDER BY id ASC').all(articleId);
+    const rawQuizzes = db.prepare('SELECT * FROM quizzes WHERE article_id = ? ORDER BY question_number ASC').all(articleId);
+    const quizzes = rawQuizzes.map((q: any) => ({
+      ...q,
+      options: typeof q.options_json === 'string' ? JSON.parse(q.options_json) : q.options_json,
+    }));
+
+    return res.json({
+      ok: true,
+      article,
+      paragraphs,
+      vocabularies,
+      quizzes,
+    });
+  } catch (error: any) {
+    console.error(`[API Error /api/cnn-news/${articleId}]:`, error?.message || error);
+    return res.status(500).json({
+      ok: false,
+      error: { code: 'INTERNAL_SERVER_ERROR', message: '기사 상세 정보를 조회하는 중 오류가 발생했습니다.' },
+    });
+  }
+});
+
 // Model configuration
 const GEMINI_TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts';

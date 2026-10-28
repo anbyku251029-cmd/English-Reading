@@ -26,6 +26,9 @@ import {
   StepProgressState,
 } from '../types';
 import { STORAGE_KEYS as STUDY_KEYS, loadSavedExpressions, saveExpressions } from './studyStorage';
+import static2022Articles from '../data/staticCnnNews2022_01.json';
+
+export const STATIC_2022_01_ARTICLES: CnnNewsArticle[] = static2022Articles as unknown as CnnNewsArticle[];
 
 export const CNN_STORAGE_KEYS = {
   ARTICLES: 'booky_cnn_news_articles',
@@ -234,17 +237,33 @@ export const SEED_ARTICLE_LUNG_NODULES: CnnNewsArticle = {
 export function loadNewsArticles(): CnnNewsArticle[] {
   try {
     const raw = localStorage.getItem(CNN_STORAGE_KEYS.ARTICLES);
-    if (!raw) return [];
+    let list: CnnNewsArticle[] = [];
+
+    if (!raw) {
+      list = [SEED_ARTICLE_LUNG_NODULES, ...STATIC_2022_01_ARTICLES];
+      saveNewsArticles(list);
+      return list;
+    }
+
     const parsed = JSON.parse(raw);
-    const list = Array.isArray(parsed)
+    list = Array.isArray(parsed)
       ? (parsed.filter((a): a is CnnNewsArticle => !!(a && typeof a === 'object' && typeof a.id === 'string')))
       : [];
 
-    // 저장소에 시드 기사가 있을 경우 STEP 11 필드 누락 보강
+    let needsSave = false;
+
+    // 2022-01 정적 기사들 중 아직 누락된 기사가 있다면 자동 병합
+    for (const staticArt of STATIC_2022_01_ARTICLES) {
+      if (!list.some((a) => a.id === staticArt.id)) {
+        list.push(staticArt);
+        needsSave = true;
+      }
+    }
+
+    // 시드 기사 존재 여부 확인 및 보강
     const seedIdx = list.findIndex((a) => a.id === SEED_ARTICLE_LUNG_NODULES.id);
     if (seedIdx >= 0) {
       const current = list[seedIdx];
-      let needsSave = false;
       if (!current.coreVocabularies || current.coreVocabularies.length === 0) {
         current.coreVocabularies = SEED_ARTICLE_LUNG_NODULES.coreVocabularies;
         needsSave = true;
@@ -275,13 +294,19 @@ export function loadNewsArticles(): CnnNewsArticle[] {
       }
       if (needsSave) {
         list[seedIdx] = current;
-        saveNewsArticles(list);
       }
+    } else {
+      list.unshift(SEED_ARTICLE_LUNG_NODULES);
+      needsSave = true;
+    }
+
+    if (needsSave) {
+      saveNewsArticles(list);
     }
     return list;
   } catch (e) {
-    console.warn('Failed to parse cnn news articles from localStorage', e);
-    return [];
+    console.warn('Failed to parse cnn news articles from localStorage, fallback to static articles', e);
+    return [SEED_ARTICLE_LUNG_NODULES, ...STATIC_2022_01_ARTICLES];
   }
 }
 
@@ -309,6 +334,8 @@ export function getNewsArticleById(id: string): CnnNewsArticle | undefined {
   if (id === SEED_ARTICLE_LUNG_NODULES.id) {
     return ensureSeedArticleLungNodules();
   }
+  const staticFound = STATIC_2022_01_ARTICLES.find((a) => a.id === id);
+  if (staticFound) return staticFound;
   return undefined;
 }
 
